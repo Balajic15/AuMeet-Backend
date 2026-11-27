@@ -17,9 +17,25 @@ export function normalizeVector(v: number[]): number[] {
   return len > 0 ? v.map((x) => x / len) : v;
 }
 
-export function geminiClient(opts: { apiKey: string; model: string; embeddingModel: string; dims: number }): AiClient {
+/** Overload, quota, timeout or server errors – worth trying the next model. */
+export function isRetryable(err: unknown): boolean {
+  return /\b(429|500|502|503|504)\b|UNAVAILABLE|RESOURCE_EXHAUSTED|overloaded|high demand|aborted|timed? ?out|ECONNRESET|fetch failed/i.test(
+    String((err as Error)?.message ?? err),
+  );
+}
+
+export function geminiClient(opts: {
+  apiKey: string;
+  /** Primary first, then fallbacks. */
+  models: string[];
+  thinking: 'minimal' | 'low' | 'off';
+  embeddingModel: string;
+  dims: number;
+  timeoutMs?: number;
+}): AiClient {
   const ai = new GoogleGenAI({ apiKey: opts.apiKey });
   const schemaCache = new WeakMap<object, Record<string, unknown>>();
+  const noThinking = new Set<string>();
 
   return {
     async structured(schema, { system, prompt, temperature = 0.2 }) {
@@ -29,13 +45,37 @@ export function geminiClient(opts: { apiKey: string; model: string; embeddingMod
         delete json['$schema'];
         schemaCache.set(schema, json);
       }
-      const res = await ai.models.generateContent({
-        model: opts.model,
-        contents: prompt,
-        config: { systemInstruction: system, temperature, responseMimeType: 'application/json', responseJsonSchema: json },
-      });
-      if (!res.text) throw new Error('Empty response from Gemini');
-      return schema.parse(JSON.parse(res.text));
+      let lastErr: unknown;
+      for (const model of opts.models) {
+        for (let attempt = 0; attempt < 2; attempt++) {
+          const thinking = opts.thinking !== 'off' && !noThinking.has(model);
+          try {
+            const res = await ai.models.generateContent({
+              model,
+              contents: prompt,
+              config: {
+                systemInstruction: system,
+                temperature,
+                responseMimeType: 'application/json',
+                responseJsonSchema: json,
+                abortSignal: AbortSignal.timeout(opts.timeoutMs ?? 45_000),
+                ...(thinking ? { thinkingConfig: { thinkingLevel: opts.thinking.toUpperCase() } as never } : {}),
+              },
+            });
+            if (!res.text) throw new Error('Empty response from Gemini');
+            return schema.parse(JSON.parse(res.text));
+          } catch (err) {
+            lastErr = err;
+            if (thinking && /thinking[^"]*not supported/i.test(String((err as Error)?.message))) {
+              noThinking.add(model);
+              continue;
+            }
+            break;
+          }
+        }
+        if (!isRetryable(lastErr) && !(lastErr instanceof SyntaxError) && !(lastErr instanceof z.ZodError)) throw lastErr;
+      }
+      throw lastErr;
     },
 
     async embed(texts, kind) {
@@ -69,7 +109,8 @@ export function getAi(): AiClient {
   if (!env.GOOGLE_API_KEY) throw new HttpError(503, 'AI features are not configured on this server (GOOGLE_API_KEY)');
   client ??= geminiClient({
     apiKey: env.GOOGLE_API_KEY,
-    model: env.GEMINI_MODEL,
+    models: [...new Set([env.GEMINI_MODEL, ...env.GEMINI_FALLBACK_MODELS.split(',')].map((m) => m.trim()).filter(Boolean))],
+    thinking: env.GEMINI_THINKING,
     embeddingModel: env.EMBEDDING_MODEL,
     dims: env.EMBEDDING_DIMS,
   });

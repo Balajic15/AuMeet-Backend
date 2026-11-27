@@ -19,7 +19,10 @@ const EnvSchema = z.object({
   MEMORY_SWEEP_SECONDS: z.coerce.number().int().min(30).default(300),
   // Gemini – used by the worker (recaps, embeddings) and by "Ask your meetings".
   GOOGLE_API_KEY: z.string().optional(),
-  GEMINI_MODEL: z.string().default('gemini-3.5-flash'),
+  // Fast models first (recaps, "Ask your meetings"); fallbacks when overloaded, over quota or slow.
+  GEMINI_MODEL: z.string().default('gemini-3.5-flash-lite'),
+  GEMINI_FALLBACK_MODELS: z.string().default('gemini-3-flash-preview,gemini-3.1-flash-lite'),
+  GEMINI_THINKING: z.enum(['minimal', 'low', 'off']).default('minimal'),
   EMBEDDING_MODEL: z.string().default('gemini-embedding-001'),
   EMBEDDING_DIMS: z.coerce.number().int().positive().default(768),
   // Block creating meetings / sending invites until the email address is verified.

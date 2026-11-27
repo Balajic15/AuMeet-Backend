@@ -8,7 +8,13 @@ const Env = z.object({
   AGENT_NAME: z.string().default('aumeet'),
   DEEPGRAM_API_KEY: z.string().min(1, 'DEEPGRAM_API_KEY is required'),
   GOOGLE_API_KEY: z.string().min(1, 'GOOGLE_API_KEY is required'),
-  GEMINI_MODEL: z.string().default('gemini-3.5-flash'),
+  // Fast models first: a live conversation needs ~1 s answers. Measured Nov 2026:
+  // 3.5-flash-lite ~1 s, 3-flash-preview ~1.3 s, 3.5-flash 10–100 s under load.
+  GEMINI_MODEL: z.string().default('gemini-3.5-flash-lite'),
+  // Tried in order when the primary is overloaded (503), over quota (429) or too slow.
+  GEMINI_FALLBACK_MODELS: z.string().default('gemini-3-flash-preview,gemini-3.1-flash-lite'),
+  // Internal "thinking" before answering. 'minimal' keeps replies fast.
+  GEMINI_THINKING: z.enum(['minimal', 'low', 'off']).default('minimal'),
   CARTESIA_API_KEY: z.string().min(1, 'CARTESIA_API_KEY is required'),
   CARTESIA_VOICE_ID: z.string().optional(),
   CARTESIA_MODEL: z.string().default('sonic-3.6'),

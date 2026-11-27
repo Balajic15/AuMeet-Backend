@@ -26,7 +26,8 @@ import {
   type RemoteTrackPublication,
 } from '@livekit/rtc-node';
 import { isAddressedToAgent, mentionsAgent, proactivityCommand } from './addressing.js';
-import { geminiStructured } from './gemini.js';
+import { geminiStructured, parseModels } from './gemini.js';
+import { ThinkingLevel } from '@google/genai';
 import { InterventionController } from './intervene/controller.js';
 import { geminiJudge } from './intervene/judge.js';
 import { AGENT_DISPLAY_NAME, config } from './config.js';
@@ -109,7 +110,8 @@ export default defineAgent<ProcData>({
     const cfg = config();
     const logger = log().child({ room: ctx.room.name });
     const info = parseDispatch(ctx.job.metadata, ctx.job.room?.name ?? 'unknown');
-    const structured = geminiStructured(cfg.GOOGLE_API_KEY, cfg.GEMINI_MODEL);
+    const models = parseModels(cfg.GEMINI_MODEL, cfg.GEMINI_FALLBACK_MODELS);
+    const structured = geminiStructured({ apiKey: cfg.GOOGLE_API_KEY, models, thinking: cfg.GEMINI_THINKING });
 
     // ---------- models ----------
     const sttEngine = new deepgram.STT({
@@ -131,7 +133,20 @@ export default defineAgent<ProcData>({
       diarize: true,
     });
     const voices = new SharedDeviceVoices();
-    const brain = new google.LLM({ apiKey: cfg.GOOGLE_API_KEY, model: cfg.GEMINI_MODEL, temperature: 0.4 });
+    // Voice replies: same fast models, with automatic fallback when one is overloaded or slow.
+    const voiceLlm = (model: string) =>
+      new google.LLM({
+        apiKey: cfg.GOOGLE_API_KEY,
+        model,
+        temperature: 0.4,
+        ...(cfg.GEMINI_THINKING !== 'off'
+          ? { thinkingConfig: { thinkingLevel: cfg.GEMINI_THINKING === 'low' ? ThinkingLevel.LOW : ThinkingLevel.MINIMAL } }
+          : {}),
+      });
+    const brain =
+      models.length > 1
+        ? new llm.FallbackAdapter({ llms: models.map(voiceLlm), attemptTimeout: 8, maxRetryPerLLM: 0 })
+        : voiceLlm(models[0]!);
     const voiceOut = new cartesia.TTS({
       apiKey: cfg.CARTESIA_API_KEY,
       model: cfg.CARTESIA_MODEL,

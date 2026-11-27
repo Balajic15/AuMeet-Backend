@@ -14,7 +14,9 @@ Rules:
 
 Decisions – be strict, this matters most:
 - "proposed": someone suggested it, nobody objected, nobody explicitly confirmed.
-- "disputed": people supported different options and the disagreement was not explicitly resolved.
+- "disputed": people supported DIFFERENT options (or someone explicitly objected) and it was not resolved.
+  Asking for time or information ("let me check the test results first", "can we look at the numbers?")
+  is NOT an objection – the item stays "proposed". Don't list such people as objectors.
 - "agreed": the group explicitly settled on ONE specific option (e.g. "agreed, PostgreSQL it is",
   "let's go with Bob's suggestion", or everyone who spoke supported the same option).
 - "rejected": the group explicitly dropped it.
@@ -31,7 +33,8 @@ Decisions – be strict, this matters most:
 - Merge restatements of the same decision into one item instead of duplicating it.
 
 Action items: concrete work someone committed to or was assigned ("I'll draft the spec", "Ravi, can you
-check pricing?" → owner Ravi once he accepts or doesn't object). Keep the deadline as said and resolve
+check pricing?" → owner Ravi once he accepts or doesn't object). ALSO record work the group says must be
+done even if nobody took it yet ("somebody needs to update the docs") with owner "" – it must not be lost. Keep the deadline as said and resolve
 dueDate (YYYY-MM-DD) against the meeting date when it is unambiguous. Mark done only if said so.
 
 Open questions: questions raised that are still unanswered; mark answered when resolved.
@@ -42,8 +45,9 @@ Progress (only when a MEETING GOAL or AGENDA is given):
 - goalStatus: "on_track" while the discussion serves the goal; "drifting" when it wanders onto
   unrelated topics for a while; "off_track" when a long stretch has nothing to do with the goal;
   "achieved" only when the goal is clearly met (e.g. the decision it asks for was explicitly agreed).
-- For every agenda item (use its id exactly): "in_progress" while it is being discussed, "done" once
-  the group concluded it or moved on after covering it, "skipped" if explicitly postponed.
+- For every agenda item (use its id exactly): "in_progress" while it is being discussed or once it was
+  started but left unfinished; "done" ONLY when the group reached its outcome (decided, answered or
+  explicitly closed it); "skipped" if explicitly postponed. Dropping a topic for small talk is NOT done.
 
 Write notes in the language mostly used in the meeting. Be concise.`;
 
