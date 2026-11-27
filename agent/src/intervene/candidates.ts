@@ -7,7 +7,12 @@ export type CandidateKind =
   | 'summarize_dispute'
   | 'off_track'
   | 'over_time'
-  | 'time_running_out';
+  | 'time_running_out'
+  | 'carryover'
+  | 'contradiction'
+  | 'open_meeting'
+  | 'agenda_next'
+  | 'wrap_up';
 
 export interface Candidate {
   /** Stable key so the same issue is raised at most once. */
@@ -19,6 +24,17 @@ export interface Candidate {
   goal: string;
   /** A ready-made line to fall back on / steer the phrasing. */
   suggestion: string;
+  /** Shorter gap after the AI last spoke than the default cooldown (facilitation, follow-ups). */
+  minGapMs?: number;
+  /** More tries than the default when the judge says "not now". */
+  maxAttempts?: number;
+  /** Longer than one or two sentences (opening, wrap-up): spoken as a generated reply from the goal. */
+  longForm?: boolean;
+}
+
+export interface CandidateContext {
+  /** Host turned on facilitator mode: open, announce transitions, wrap up. */
+  facilitator?: boolean;
 }
 
 export interface CandidateTiming {
@@ -59,8 +75,72 @@ export function findCandidates(
   now: number,
   alreadyRaised: ReadonlySet<string>,
   timing: CandidateTiming = DEFAULT_TIMING,
+  context: CandidateContext = {},
 ): Candidate[] {
   const out: Candidate[] = [];
+  const facilitator = !!context.facilitator;
+  const humanLines = transcript.filter((u) => !u.isAgent);
+  const started = humanLines[0]?.at ?? null;
+  const elapsed = started === null ? 0 : now - started;
+  const planned = insights.agenda.reduce((sum, a) => sum + (a.minutes ?? 0), 0);
+  const c = insights.carryover;
+  const carryoverText = c
+    ? [
+        ...c.tasks.map((t) => `${t.owner ?? 'nobody'} had "${t.task}"${t.dueDate ? ` due ${t.dueDate}${t.overdue ? ' (overdue)' : ''}` : ''}`),
+        ...c.decisions.map((d) => `"${d.statement}" was left undecided`),
+      ].join('; ')
+    : '';
+
+  // ---- facilitator: opening ----
+  // Early in the meeting only (someone switching the mode on mid-meeting gets no opening).
+  if (facilitator && !alreadyRaised.has('open') && humanLines.length < 15 && elapsed < 5 * 60_000) {
+    const agendaText = insights.agenda
+      .map((a) => `${a.title}${a.minutes ? ` (${a.minutes} min)` : ''}`)
+      .join(', ');
+    out.push({
+      key: 'open',
+      kind: 'open_meeting',
+      priority: 50,
+      minGapMs: 0,
+      maxAttempts: 4,
+      longForm: true,
+      goal:
+        'Open the meeting as its facilitator in at most three short spoken sentences: ' +
+        (insights.goal ? `the goal is "${insights.goal.text}"; ` : '') +
+        (agendaText ? `the agenda is ${agendaText}${planned ? ` – ${planned} minutes in total` : ''}; ` : '') +
+        (carryoverText ? `open from last time: ${carryoverText}; ` : '') +
+        'then invite the group to start with the first item.',
+      suggestion: insights.goal ? `Welcome! Today we want to ${insights.goal.text.replace(/[.!]$/, '').toLowerCase()}. Shall we start?` : 'Welcome! Shall we get started?',
+    });
+  }
+
+  // ---- continuity: follow up on last meeting (the opening covers it in facilitator mode) ----
+  if (c && carryoverText && !facilitator && !alreadyRaised.has('carryover') && humanLines.length >= 1 && elapsed < 10 * 60_000) {
+    out.push({
+      key: 'carryover',
+      kind: 'carryover',
+      priority: 45,
+      minGapMs: 20_000,
+      maxAttempts: 3,
+      goal: `Follow up on what was left open at the previous meeting ("${c.fromTitle}", ${c.fromDate}): ${carryoverText}. Ask briefly for the status, naming the owners.`,
+      suggestion: `Before we dive in – from last time, ${carryoverText}. Any updates?`,
+    });
+  }
+
+  // ---- contradictions with earlier agreed decisions ----
+  for (const d of insights.decisions) {
+    if (!d.contradicts || d.status === 'rejected') continue;
+    const key = `contradiction:${d.id}`;
+    if (alreadyRaised.has(key)) continue;
+    out.push({
+      key,
+      kind: 'contradiction',
+      priority: 32,
+      minGapMs: 30_000,
+      goal: `The group is now heading towards "${d.statement}", but on ${d.contradicts.date} ("${d.contradicts.title}") it agreed "${d.contradicts.statement}". Point this out neutrally and ask whether they are deliberately changing that decision.`,
+      suggestion: `Just flagging: on ${d.contradicts.date} we agreed to ${d.contradicts.statement.replace(/[.!]$/, '').toLowerCase()}. Are we changing that?`,
+    });
+  }
   const age = (iso: string) => now - Date.parse(iso);
   const humanLinesSince = (iso: string) => {
     const t = Date.parse(iso);
@@ -151,7 +231,39 @@ export function findCandidates(
     });
   }
 
-  const planned = insights.agenda.reduce((sum, a) => sum + (a.minutes ?? 0), 0);
+  // ---- facilitator: agenda transitions and wrap-up ----
+  if (facilitator) {
+    const done = insights.agenda.filter((a) => a.status === 'done' && a.doneAt).sort((a, b) => Date.parse(b.doneAt!) - Date.parse(a.doneAt!))[0];
+    const inProgress = insights.agenda.some((a) => a.status === 'in_progress');
+    const next = insights.agenda.find((a) => a.status === 'not_started');
+    if (done && next && !inProgress && !alreadyRaised.has(`next:${done.id}`)) {
+      out.push({
+        key: `next:${done.id}`,
+        kind: 'agenda_next',
+        priority: 27,
+        minGapMs: 20_000,
+        maxAttempts: 3,
+        goal: `The agenda item "${done.title}" is finished${done.note ? ` (${done.note})` : ''}. As facilitator, close it in a few words and move the group on to the next item, "${next.title}"${next.minutes ? ` (${next.minutes} minutes)` : ''}.`,
+        suggestion: `That covers ${done.title}. Next up: ${next.title}${next.minutes ? `, ${next.minutes} minutes` : ''}.`,
+      });
+    }
+    if (planned >= 4 && started !== null && elapsed >= (planned - 2) * 60_000 && !alreadyRaised.has('wrapup')) {
+      out.push({
+        key: 'wrapup',
+        kind: 'wrap_up',
+        priority: 48,
+        minGapMs: 15_000,
+        maxAttempts: 4,
+        longForm: true,
+        goal:
+          'The planned time is almost over. As facilitator, give a spoken wrap-up of about thirty seconds from the CURRENT MEETING NOTES: ' +
+          'what was agreed (and what is still undecided), each open task with its owner and due date, and what remains open. ' +
+          'End by asking whether anything is missing. No lists or markdown – natural sentences.',
+        suggestion: 'We are nearly out of time – let me quickly recap what we agreed and who is doing what.',
+      });
+    }
+  }
+
   const firstLine = transcript.find((u) => !u.isAgent);
   const pendingItems = insights.agenda.filter((a) => a.status === 'not_started');
   if (planned > 0 && firstLine && pendingItems.length && !alreadyRaised.has('timeleft')) {

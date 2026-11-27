@@ -13,6 +13,8 @@ export interface InterventionOptions {
   agentIdle: () => boolean;
   /** Host setting: may the AI speak up on its own at all? */
   enabled: boolean;
+  /** Host setting: facilitator mode (opening, agenda transitions, wrap-up). Read on every check. */
+  facilitator?: () => boolean;
   /** Silence needed before interjecting. */
   pauseMs?: number;
   /** Minimum gap after the AI last spoke (for any reason). */
@@ -111,6 +113,17 @@ export class InterventionController {
     this.lastAgentSpokeAt = this.now();
   }
 
+  /** Time-based prompts (opening, over time, wrap-up) must fire in silence too: call every few seconds. */
+  tick(): void {
+    if (this.timer || this.checking) return;
+    this.notesUpdated();
+  }
+
+  /** Mark an issue as handled without speaking (e.g. the opening was replaced by something else). */
+  markRaised(key: string): void {
+    this.raised.add(key);
+  }
+
   /** New notes may contain new candidates – check if we're already in a pause. */
   notesUpdated(): void {
     if (this.speaking.size > 0) return;
@@ -146,15 +159,16 @@ export class InterventionController {
     const silence = now - this.lastHumanSpeechAt;
     if (silence < this.pauseMs) return null;
     if (now - this.startedAt < this.warmupMs) return null;
-    if (this.lastAgentSpokeAt !== null && now - this.lastAgentSpokeAt < this.cooldownMs) return null;
     if (!this.o.agentIdle()) return null;
 
-    const candidate = findCandidates(this.o.insights(), this.o.transcript(), now, this.raised, this.o.timing ?? DEFAULT_TIMING).find(
-      (c) => {
-        const a = this.attempts.get(c.key);
-        return !a || (a.count < this.maxAttempts && now - a.lastAt >= this.retryAfterMs);
-      },
-    );
+    const sinceAgent = this.lastAgentSpokeAt === null ? Infinity : now - this.lastAgentSpokeAt;
+    const candidate = findCandidates(this.o.insights(), this.o.transcript(), now, this.raised, this.o.timing ?? DEFAULT_TIMING, {
+      facilitator: this.o.facilitator?.() ?? false,
+    }).find((c) => {
+      if (sinceAgent < (c.minGapMs ?? this.cooldownMs)) return false;
+      const a = this.attempts.get(c.key);
+      return !a || (a.count < (c.maxAttempts ?? this.maxAttempts) && now - a.lastAt >= this.retryAfterMs);
+    });
     if (!candidate) return null;
 
     const a = this.attempts.get(candidate.key) ?? { count: 0, lastAt: 0 };

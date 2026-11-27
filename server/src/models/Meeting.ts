@@ -46,6 +46,10 @@ const MeetingSchema = new Schema(
       // AI may speak up on its own (confirm decisions, ask for owners). Off = only when asked.
       aiProactive: { type: Boolean, default: true },
       aiReplyMode: { type: String, enum: AI_REPLY_MODES, default: 'named' },
+      // AI facilitates: opens the meeting, announces agenda transitions, wraps up.
+      aiFacilitator: { type: Boolean, default: false },
+      // Email the recap (and each person's tasks) to participants after the meeting.
+      followUpEmail: { type: Boolean, default: true },
       // Host locked the meeting: nobody new can join (the host still can).
       locked: { type: Boolean, default: false },
       // People wait in the lobby until the host admits them.
@@ -55,6 +59,8 @@ const MeetingSchema = new Schema(
     prep: {
       goal: { type: String, trim: true, maxlength: 1000 },
       agenda: { type: [AgendaItemSchema], default: [] },
+      // Code of an earlier meeting (same host) whose open items carry over into this one.
+      followUpOf: { type: String },
     },
     scheduledFor: { type: Date },
     startedAt: { type: Date },
@@ -83,12 +89,15 @@ export function toPublicMeeting(m: MeetingDoc) {
       aiEnabled: m.settings?.aiEnabled ?? true,
       aiProactive: m.settings?.aiProactive ?? true,
       aiReplyMode: (m.settings?.aiReplyMode ?? 'named') as AiReplyMode,
+      aiFacilitator: m.settings?.aiFacilitator ?? false,
+      followUpEmail: m.settings?.followUpEmail ?? true,
       locked: m.settings?.locked ?? false,
       waitingRoom: m.settings?.waitingRoom ?? false,
     },
     prep: {
       goal: m.prep?.goal ?? '',
       agenda: (m.prep?.agenda ?? []).map((a) => ({ id: a.id, title: a.title, minutes: a.minutes ?? null })),
+      followUpOf: m.prep?.followUpOf ?? null,
     },
     scheduledFor: m.scheduledFor ?? null,
     startedAt: m.startedAt ?? null,

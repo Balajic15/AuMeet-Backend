@@ -32,11 +32,17 @@ If you speak: one or two short, friendly sentences, spoken aloud (no lists, no m
 the group or the right person by name, in the language the meeting is mostly held in. Ask; don't decide
 for them. Never pretend something was agreed.`;
 
+const FACILITATION = new Set(['open_meeting', 'agenda_next', 'wrap_up']);
+
 export function judgePrompt(input: Parameters<JudgeFn>[0]): string {
   const notes = renderNotes(input.insights);
   return [
     `What you are considering: ${input.candidate.goal}`,
     `A possible phrasing: "${input.candidate.suggestion}"`,
+    FACILITATION.has(input.candidate.kind)
+      ? 'This is a facilitation step the host switched on (facilitator mode). It is not an issue to be resolved: ' +
+        'speak unless people are clearly in the middle of a conversation or have just done it themselves.'
+      : '',
     `Nobody has spoken for ${(input.silenceMs / 1000).toFixed(1)} seconds.`,
     '',
     'CURRENT NOTES:',

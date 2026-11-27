@@ -37,6 +37,10 @@ check pricing?" → owner Ravi once he accepts or doesn't object). ALSO record w
 done even if nobody took it yet ("somebody needs to update the docs") with owner "" – it must not be lost. Keep the deadline as said and resolve
 dueDate (YYYY-MM-DD) against the meeting date when it is unambiguous. Mark done only if said so.
 
+Contradictions: if EARLIER AGREED DECISIONS are listed, set "contradicts" on a decision to the P-id
+of an earlier decision it reverses, replaces or conflicts with (e.g. earlier "Use PostgreSQL for billing",
+now "Move billing to MongoDB"). Revisiting or confirming the same choice is NOT a contradiction. Otherwise "".
+
 Open questions: questions raised that are still unanswered; mark answered when resolved.
 
 Topics: the main subjects discussed, short titles; "closed" once the group moved on.
@@ -63,6 +67,7 @@ export function analystPrompt(opts: {
   agenda?: Array<{ id: string; title: string; minutes: number | null }>;
   /** Minutes since the meeting started. */
   elapsedMinutes?: number;
+  pastDecisions?: Array<{ ref: string; statement: string; date: string; title: string }>;
 }): string {
   const { current } = opts;
   const notes = {
@@ -78,6 +83,7 @@ export function analystPrompt(opts: {
       supporters: d.supporters,
       objectors: d.objectors,
       confirmationNeeded: d.confirmationNeeded ?? '',
+      contradicts: d.contradicts?.ref ?? '',
       evidence: d.evidence,
     })),
     actionItems: current.actionItems.map((a) => ({
@@ -115,6 +121,10 @@ export function analystPrompt(opts: {
             return `${a.id}: ${a.title}${a.minutes ? ` [${a.minutes} min]` : ''} – ${cur?.status ?? 'not_started'}`;
           })
           .join('\n')
+      : '',
+    opts.pastDecisions?.length
+      ? 'EARLIER AGREED DECISIONS (from previous meetings; cite as "contradicts"):\n' +
+        opts.pastDecisions.map((p) => `${p.ref} [${p.date}, "${p.title}"]: ${p.statement}`).join('\n')
       : '',
     opts.elapsedMinutes !== undefined ? `Minutes since the meeting started: ${opts.elapsedMinutes}` : '',
     opts.final ? 'The meeting has ENDED. Produce the final notes and a complete summary.' : '',

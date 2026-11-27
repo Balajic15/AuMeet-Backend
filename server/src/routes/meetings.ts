@@ -39,9 +39,7 @@ const CreateBody = z.object({
   prep: z.lazy(() => PrepInput).optional(),
   title: z.string().trim().min(1).max(120).default('Untitled meeting'),
   scheduledFor: z.coerce.date().optional(),
-  settings: z
-    .object({ allowGuests: z.boolean().optional(), aiEnabled: z.boolean().optional(), aiProactive: z.boolean().optional(), locked: z.boolean().optional(), waitingRoom: z.boolean().optional(), aiReplyMode: z.enum(['named', 'any']).optional() })
-    .optional(),
+  settings: z.lazy(() => SettingsInput).optional(),
 });
 
 const AgendaInput = z
@@ -57,7 +55,29 @@ const AgendaInput = z
 const PrepInput = z.object({
   goal: z.string().trim().max(1000).optional(),
   agenda: AgendaInput.optional(),
+  /** Earlier meeting (same host) this one follows up on; null clears it. */
+  followUpOf: z.string().trim().regex(MEETING_CODE_RE, 'Invalid meeting code').nullable().optional(),
 });
+
+const SettingsInput = z.object({
+  allowGuests: z.boolean().optional(),
+  aiEnabled: z.boolean().optional(),
+  aiProactive: z.boolean().optional(),
+  aiReplyMode: z.enum(['named', 'any']).optional(),
+  aiFacilitator: z.boolean().optional(),
+  followUpEmail: z.boolean().optional(),
+  locked: z.boolean().optional(),
+  waitingRoom: z.boolean().optional(),
+});
+
+/** "Follow-up to": only one of the host's own other meetings (its notes then reach this meeting's AI). */
+async function checkFollowUpOf(hostId: string, code: string | null | undefined, ownCode?: string): Promise<string | undefined> {
+  if (!code) return undefined;
+  if (code === ownCode) throw badRequest('A meeting cannot follow up on itself');
+  const exists = await MeetingModel.exists({ code, host: hostId });
+  if (!exists) throw badRequest('You can only follow up on a meeting you host');
+  return code;
+}
 
 /** Stable ids so the AI's progress tracking survives edits. */
 function normaliseAgenda(items: z.infer<typeof AgendaInput>) {
@@ -73,9 +93,7 @@ const UpdateBody = z
     prep: PrepInput.optional(),
     title: z.string().trim().min(1).max(120).optional(),
     scheduledFor: z.coerce.date().nullable().optional(),
-    settings: z
-      .object({ allowGuests: z.boolean().optional(), aiEnabled: z.boolean().optional(), aiProactive: z.boolean().optional(), locked: z.boolean().optional(), waitingRoom: z.boolean().optional(), aiReplyMode: z.enum(['named', 'any']).optional() })
-      .optional(),
+    settings: z.lazy(() => SettingsInput).optional(),
   })
   .refine((b) => Object.keys(b).length > 0, 'Nothing to update');
 
@@ -102,6 +120,7 @@ async function pushRoomState(meeting: MeetingDoc): Promise<void> {
   await setRoomSettings(meeting.code, {
     aiProactive: meeting.settings?.aiProactive ?? true,
     aiReplyMode: (meeting.settings?.aiReplyMode ?? 'named') as 'named' | 'any',
+    aiFacilitator: meeting.settings?.aiFacilitator ?? false,
     recording,
     prepVersion: (meeting.updatedAt ?? new Date()).getTime(),
   });
@@ -122,6 +141,7 @@ function assertHost(req: Request, meeting: MeetingDoc) {
 router.post('/', requireAuth, async (req, res) => {
   await assertVerified(req);
   const body = CreateBody.parse(req.body ?? {});
+  const followUpOf = await checkFollowUpOf(req.auth!.sub, body.prep?.followUpOf);
 
   // Codes have ~47 bits of entropy; retry only guards against the astronomically rare collision.
   for (let attempt = 0; attempt < 5; attempt++) {
@@ -133,7 +153,7 @@ router.post('/', requireAuth, async (req, res) => {
         scheduledFor: body.scheduledFor,
         settings: body.settings,
         prep: body.prep
-          ? { goal: body.prep.goal ?? '', agenda: normaliseAgenda(body.prep.agenda ?? []) }
+          ? { goal: body.prep.goal ?? '', agenda: normaliseAgenda(body.prep.agenda ?? []), ...(followUpOf ? { followUpOf } : {}) }
           : undefined,
       });
       res.status(201).json({ meeting: toPublicMeeting(meeting) });
@@ -183,6 +203,11 @@ router.patch('/:code', requireAuth, async (req, res) => {
   if (body.settings?.locked !== undefined) meeting.settings!.locked = body.settings.locked;
   if (body.settings?.waitingRoom !== undefined) meeting.settings!.waitingRoom = body.settings.waitingRoom;
   if (body.settings?.aiReplyMode !== undefined) meeting.settings!.aiReplyMode = body.settings.aiReplyMode;
+  if (body.settings?.aiFacilitator !== undefined) meeting.settings!.aiFacilitator = body.settings.aiFacilitator;
+  if (body.settings?.followUpEmail !== undefined) meeting.settings!.followUpEmail = body.settings.followUpEmail;
+  if (body.prep?.followUpOf !== undefined) {
+    meeting.set('prep.followUpOf', (await checkFollowUpOf(req.auth!.sub, body.prep.followUpOf, meeting.code)) ?? undefined);
+  }
   if (body.prep?.goal !== undefined) meeting.set('prep.goal', body.prep.goal);
   if (body.prep?.agenda !== undefined) meeting.set('prep.agenda', normaliseAgenda(body.prep.agenda));
   const aiChanged = body.settings?.aiEnabled !== undefined && meeting.isModified('settings.aiEnabled');
@@ -195,7 +220,12 @@ router.patch('/:code', requireAuth, async (req, res) => {
     } else if (aiChanged) {
       await removeAgents(meeting.code);
     }
-    if (body.settings?.aiProactive !== undefined || body.settings?.aiReplyMode !== undefined || body.prep !== undefined) {
+    if (
+      body.settings?.aiProactive !== undefined ||
+      body.settings?.aiReplyMode !== undefined ||
+      body.settings?.aiFacilitator !== undefined ||
+      body.prep !== undefined
+    ) {
       await pushRoomState(meeting);
     }
   } catch (err) {
@@ -526,6 +556,42 @@ const publicDoc = (d: { _id: unknown; filename: string; mimeType: string; sizeBy
   truncated: !!d.truncated,
   indexed: !!d.indexed,
   createdAt: d.createdAt ?? null,
+});
+
+// What would carry over into this meeting: open items of the latest earlier session of this link and/or
+// of the meeting it follows up on (?from=<code> previews a choice before it is saved). Host only.
+router.get('/:code/carryover', requireAuth, async (req, res) => {
+  const meeting = await findByCode(req.params.code as string);
+  assertHost(req, meeting);
+  const from = typeof req.query['from'] === 'string' && req.query['from'] ? req.query['from'] : meeting.prep?.followUpOf;
+  const followUp = from ? await checkFollowUpOf(req.auth!.sub, from, meeting.code) : undefined;
+  const codes = [meeting.code, ...(followUp ? [followUp] : [])];
+  const last = await MeetingInsightModel.findOne({ meetingCode: { $in: codes } })
+    .sort({ startedAt: -1 })
+    .select({ meetingCode: 1, title: 1, startedAt: 1, 'insights.decisions': 1, 'insights.actionItems': 1 })
+    .lean();
+  const today = new Date().toISOString().slice(0, 10);
+  const ins = (last?.insights ?? {}) as {
+    decisions?: Array<{ statement: string; status: string; options?: string[] }>;
+    actionItems?: Array<{ task: string; owner: string | null; dueDate: string | null; status: string }>;
+  };
+  const decisions = (ins.decisions ?? [])
+    .filter((d) => d.status === 'disputed' || d.status === 'proposed')
+    .map((d) => ({ statement: d.statement, options: d.options ?? [] }));
+  const tasks = (ins.actionItems ?? [])
+    .filter((a) => a.status === 'open')
+    .map((a) => ({ task: a.task, owner: a.owner ?? null, dueDate: a.dueDate ?? null, overdue: !!a.dueDate && a.dueDate < today }));
+  res.json({
+    carryover:
+      last && (decisions.length || tasks.length)
+        ? {
+            fromTitle: last.title ?? 'Previous meeting',
+            fromDate: last.startedAt ? new Date(last.startedAt).toISOString().slice(0, 10) : '',
+            decisions: decisions.slice(0, 8),
+            tasks: tasks.slice(0, 8),
+          }
+        : null,
+  });
 });
 
 router.get('/:code/documents', requireAuth, async (req, res) => {

@@ -9,6 +9,7 @@ import { env } from './config/env.js';
 import { connectDb, disconnectDb } from './db.js';
 import { getAi } from './ai/gemini.js';
 import { findSessionsToProcess, processSession } from './memory/process.js';
+import { sendFollowUps } from './memory/followup.js';
 import { purgeOldContent } from './memory/retention.js';
 import { MEMORY_QUEUE, createMemoryQueue, enqueueSession, redisConnection, type ProcessSessionJob } from './queue.js';
 import { logger } from './logger.js';
@@ -46,6 +47,15 @@ async function main() {
         const { sessionId } = job.data as ProcessSessionJob;
         const res = await processSession(sessionId, ai);
         logger.info({ sessionId, chunks: res.chunks, skipped: res.skipped }, 'session processed');
+        if (res.recap) {
+          // A failed email must not fail (and re-run) the memory job.
+          try {
+            const mail = await sendFollowUps(sessionId);
+            if (mail.sent || mail.skipped !== 'already sent') logger.info({ sessionId, ...mail }, 'follow-up emails');
+          } catch (err) {
+            logger.warn({ err, sessionId }, 'follow-up emails failed');
+          }
+        }
         return res;
       }
       throw new Error(`Unknown job ${job.name}`);

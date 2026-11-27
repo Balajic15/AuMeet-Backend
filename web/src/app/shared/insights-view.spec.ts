@@ -80,4 +80,32 @@ describe('InsightsView – goal and agenda', () => {
     expect(el.querySelector('.a-done .a-meta')?.textContent?.replace(/\s+/g, ' ').trim()).toBe('Done · 8/10 min · PostgreSQL');
     expect(el.querySelector('.a-not_started .a-meta')?.textContent?.replace(/\s+/g, ' ').trim()).toBe('Not started · 5 min');
   });
+
+  it("shows what carried over from last meeting and flags a reversed decision", async () => {
+    const f = await render({
+      insights: {
+        ...notes,
+        carryover: {
+          fromTitle: "Billing sync", fromDate: "2026-11-19",
+          decisions: [{ statement: "Which queue to use", options: ["SQS", "Kafka"] }],
+          tasks: [{ task: "Migration plan", owner: "Ravi", dueDate: "2026-11-21", overdue: true }],
+        },
+        decisions: [{
+          ...notes.decisions[0]!, id: "d3", statement: "Move billing to MongoDB", status: "proposed",
+          contradicts: { ref: "P1", statement: "Use PostgreSQL for billing", date: "2026-11-12", title: "Kickoff" },
+        }],
+      },
+    });
+    const el = f.nativeElement as HTMLElement;
+    const carry = el.querySelector(".carry")!.textContent!.replace(/\s+/g, " ");
+    expect(carry).toContain("From last meeting");
+    expect(carry).toContain("Migration plan – Ravi, due 2026-11-21 · overdue");
+    expect(carry).toContain("Undecided: Which queue to use (SQS vs Kafka)");
+    expect(el.querySelector(".conflict")!.textContent!.replace(/\s+/g, " ").trim())
+      .toBe("Goes against the decision of 2026-11-12 (“Kickoff”): Use PostgreSQL for billing");
+    // nothing extra when there is no carryover or conflict
+    const plain = (await render({ insights: notes })).nativeElement as HTMLElement;
+    expect(plain.querySelector(".carry")).toBeNull();
+    expect(plain.querySelector(".conflict")).toBeNull();
+  });
 });

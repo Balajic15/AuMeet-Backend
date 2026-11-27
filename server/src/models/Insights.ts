@@ -21,6 +21,8 @@ const MeetingInsightSchema = new Schema(
     memoryIndexedAt: Date,
     memoryAttempts: Number,
     memoryError: String,
+    // Recap email sent to attendees (once per session, even if the notes are edited later).
+    followUpSentAt: Date,
     // People can correct the AI notes after the meeting; this triggers a fresh recap + index.
     notesEditedAt: Date,
     notesEditedBy: String,

@@ -35,6 +35,9 @@ export const ModelOutput = z.object({
       confirmationNeeded: Str.describe(
         'If the group should be asked to confirm, the exact question to ask; otherwise ""',
       ),
+      contradicts: Str.describe(
+        'Id of an EARLIER AGREED DECISION (e.g. "P2") that this decision reverses, replaces or conflicts with; otherwise ""',
+      ),
       evidence: Evidence,
     }),
   ),
@@ -116,9 +119,30 @@ export interface Decision {
   supporters: string[];
   objectors: string[];
   confirmationNeeded: string | null;
+  /** An earlier meeting's agreed decision that this one goes against. */
+  contradicts?: PastDecisionRef | null;
   evidence: number[];
   firstSeenAt: string;
   updatedAt: string;
+}
+
+/** An agreed decision from an earlier meeting (for spotting contradictions). */
+export interface PastDecisionRef {
+  /** Short id used in the prompt, e.g. "P2". */
+  ref: string;
+  statement: string;
+  /** YYYY-MM-DD */
+  date: string;
+  title: string;
+}
+
+/** Unfinished business from the previous meeting, shown at the start of this one. */
+export interface Carryover {
+  fromTitle: string;
+  /** YYYY-MM-DD */
+  fromDate: string;
+  decisions: Array<{ statement: string; options: string[] }>;
+  tasks: Array<{ task: string; owner: string | null; dueDate: string | null; overdue: boolean }>;
 }
 
 export interface ActionItem {
@@ -154,6 +178,8 @@ export interface Insights {
   /** Only when the host set a goal / agenda. */
   goal: GoalProgress | null;
   agenda: AgendaProgress[];
+  /** Open items from the previous meeting (null when there are none). */
+  carryover?: Carryover | null;
   /** Highest transcript line number included in the last analysis. */
   analyzedThrough: number;
   updatedAt: string;
@@ -168,6 +194,7 @@ export function emptyInsights(): Insights {
     openQuestions: [],
     goal: null,
     agenda: [],
+    carryover: null,
     analyzedThrough: 0,
     updatedAt: new Date(0).toISOString(),
   };

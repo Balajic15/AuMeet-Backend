@@ -206,7 +206,7 @@
 
   @case ('prepare') {
     @let m = $any(dialog()).meeting;
-    <app-prepare-dialog [meeting]="m" (saved)="onPrepared($event)" (closed)="dialog.set(null)" />
+    <app-prepare-dialog [meeting]="m" [others]="hostedMeetings()" (saved)="onPrepared($event)" (closed)="dialog.set(null)" />
   }
 
   @case ('invite') {
@@ -251,6 +251,8 @@
         </div>
         <label class="check"><input type="checkbox" formControlName="aiEnabled" /> AI participant joins the meeting</label>
         <label class="check sub"><input type="checkbox" formControlName="aiProactive" /> AI can speak up on its own (e.g. to confirm decisions)</label>
+        <label class="check sub"><input type="checkbox" formControlName="aiFacilitator" /> AI facilitates: opens the meeting, moves through the agenda, wraps up</label>
+        <label class="check"><input type="checkbox" formControlName="followUpEmail" /> Email the recap and each person's tasks after the meeting</label>
         <label class="check"><input type="checkbox" formControlName="allowGuests" /> Allow guests without an account</label>
         <div class="dlg-actions">
           <button type="button" class="btn btn-outline" (click)="dialog.set(null)">Cancel</button>

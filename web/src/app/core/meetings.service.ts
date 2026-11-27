@@ -15,6 +15,10 @@ export interface MeetingSettings {
   waitingRoom: boolean;
   /** 'named' = AI answers when called by name; 'any' = also answers questions asked to the room. */
   aiReplyMode: 'named' | 'any';
+  /** AI facilitates: opens the meeting, announces agenda transitions, wraps up. */
+  aiFacilitator: boolean;
+  /** Recap (and each person's tasks) emailed to attendees afterwards. */
+  followUpEmail: boolean;
 }
 
 export interface AgendaItem {
@@ -26,6 +30,16 @@ export interface AgendaItem {
 export interface MeetingPrep {
   goal: string;
   agenda: AgendaItem[];
+  /** Code of an earlier meeting (same host) whose open items carry over. */
+  followUpOf: string | null;
+}
+
+/** What carries over from the previous meeting. */
+export interface Carryover {
+  fromTitle: string;
+  fromDate: string;
+  decisions: Array<{ statement: string; options: string[] }>;
+  tasks: Array<{ task: string; owner: string | null; dueDate: string | null; overdue: boolean }>;
 }
 
 export interface MeetingDocumentInfo {
@@ -103,6 +117,7 @@ export interface PendingJoin {
 }
 
 export interface PrepInput {
+  followUpOf?: string | null;
   goal?: string;
   agenda?: Array<{ id?: string; title: string; minutes?: number | null }>;
 }
@@ -165,6 +180,12 @@ export class MeetingsService {
     return firstValueFrom(
       this.http.get<JoinRequestStatus>(`/api/meetings/${code}/join-requests/${requestId}`, { params: { secret } }),
     );
+  }
+
+  /** Host only. Open items that would carry over; `from` previews a "follow-up to" choice. */
+  async carryover(code: string, from?: string | null): Promise<Carryover | null> {
+    const params: Record<string, string> = from ? { from } : {};
+    return (await firstValueFrom(this.http.get<{ carryover: Carryover | null }>(`/api/meetings/${code}/carryover`, { params }))).carryover;
   }
 
   async documents(code: string): Promise<MeetingDocumentInfo[]> {

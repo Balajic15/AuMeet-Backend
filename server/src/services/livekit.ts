@@ -175,7 +175,7 @@ export async function removeAgents(roomName: string): Promise<number> {
  */
 export async function setRoomSettings(
   roomName: string,
-  settings: { aiProactive: boolean; aiReplyMode?: 'named' | 'any'; recording?: boolean; prepVersion?: number },
+  settings: { aiProactive: boolean; aiReplyMode?: 'named' | 'any'; aiFacilitator?: boolean; recording?: boolean; prepVersion?: number },
 ): Promise<void> {
   try {
     await rooms().updateRoomMetadata(roomName, JSON.stringify(settings));

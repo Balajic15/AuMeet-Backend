@@ -120,6 +120,11 @@ export type PanelTab = 'chat' | 'people' | 'insights';
                    (change)="setting.emit({ aiReplyMode: $any($event.target).checked ? 'any' : 'named' })" />
             AI also answers questions asked to the room
           </label>
+          <label class="switch sub">
+            <input type="checkbox" [checked]="m.settings.aiFacilitator" [disabled]="saving() || !m.settings.aiEnabled"
+                   (change)="setting.emit({ aiFacilitator: $any($event.target).checked })" />
+            AI facilitates (agenda, time, wrap-up)
+          </label>
           @if (m.settings.aiEnabled && !room.hasAgent()) {
             <button type="button" class="btn btn-outline small invite-host" [disabled]="invitingAi()" (click)="inviteAi.emit()">
               <app-icon name="sparkles" [size]="16" /> {{ invitingAi() ? 'Inviting AI…' : 'Invite AI now' }}

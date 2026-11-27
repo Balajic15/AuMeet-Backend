@@ -104,6 +104,8 @@ export class Dashboard {
     when: new FormControl('', { nonNullable: true }),
     waitingRoom: new FormControl(false, { nonNullable: true }),
     aiReplyMode: new FormControl<'named' | 'any'>('named', { nonNullable: true }),
+    aiFacilitator: new FormControl(false, { nonNullable: true }),
+    followUpEmail: new FormControl(true, { nonNullable: true }),
     allowGuests: new FormControl(true, { nonNullable: true }),
     aiEnabled: new FormControl(true, { nonNullable: true }),
     aiProactive: new FormControl(true, { nonNullable: true }),
@@ -144,6 +146,9 @@ export class Dashboard {
   }
 
   // ---------- helpers used by the template ----------
+
+  /** Meetings I host, newest first – choices for "Follow-up to". */
+  protected readonly hostedMeetings = computed(() => this.all().filter((m) => m.hostId === this.auth.user()?.id));
 
   protected isHost(m: Meeting): boolean {
     return m.hostId === this.auth.user()?.id;
@@ -252,6 +257,8 @@ export class Dashboard {
       aiProactive: m.settings.aiProactive ?? true,
       waitingRoom: m.settings.waitingRoom ?? false,
       aiReplyMode: m.settings.aiReplyMode ?? 'named',
+      aiFacilitator: m.settings.aiFacilitator ?? false,
+      followUpEmail: m.settings.followUpEmail ?? true,
     });
     this.dialog.set({ kind: 'settings', meeting: m });
   }
@@ -266,7 +273,7 @@ export class Dashboard {
       const updated = await this.meetings.update(m.code, {
         title: v.title.trim(),
         scheduledFor: v.when ? new Date(v.when).toISOString() : null,
-        settings: { allowGuests: v.allowGuests, aiEnabled: v.aiEnabled, aiProactive: v.aiProactive, waitingRoom: v.waitingRoom, aiReplyMode: v.aiReplyMode },
+        settings: { allowGuests: v.allowGuests, aiEnabled: v.aiEnabled, aiProactive: v.aiProactive, waitingRoom: v.waitingRoom, aiReplyMode: v.aiReplyMode, aiFacilitator: v.aiFacilitator, followUpEmail: v.followUpEmail },
       });
       this.replace(updated);
       this.dialog.set(null);

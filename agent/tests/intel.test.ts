@@ -24,6 +24,7 @@ const disputedDb = (id = ''): ModelOutput['decisions'][number] => ({
   supporters: [],
   objectors: [],
   confirmationNeeded: 'Can we confirm which database the team has agreed to use?',
+  contradicts: '',
   evidence: [1, 2, 3, 99],
 });
 

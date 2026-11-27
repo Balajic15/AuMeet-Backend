@@ -45,6 +45,7 @@ function script(lines: Line[]): Utterance[] {
 interface Prep {
   goal?: string;
   agenda?: Array<{ id: string; title: string; minutes: number | null }>;
+  pastDecisions?: Array<{ ref: string; statement: string; date: string; title: string }>;
 }
 
 /** Feed the transcript in batches of 4 lines, like the live analyzer does. */
@@ -65,6 +66,7 @@ async function analyse(lines: Utterance[], prep: Prep = {}, batch = 4): Promise<
         final: end === lines.length,
         goal: prep.goal,
         agenda: prep.agenda,
+        pastDecisions: prep.pastDecisions,
         elapsedMinutes: Math.round((seen.at(-1)!.at - T0) / 60_000),
       }),
       temperature: 0.1,
@@ -77,6 +79,7 @@ async function analyse(lines: Utterance[], prep: Prep = {}, batch = 4): Promise<
       now: new Date(seen.at(-1)!.at),
       goal: prep.goal,
       agendaPlan: prep.agenda,
+      pastDecisions: prep.pastDecisions,
     });
     if (end === lines.length) break;
   }
@@ -92,7 +95,38 @@ const results: Array<{ scenario: string; checks: Check[]; ms: number[] }> = [];
 const check = (name: string, ok: boolean, detail?: unknown): Check => ({ name, ok, detail: ok ? undefined : JSON.stringify(detail)?.slice(0, 300) });
 const has = (s: string | null | undefined, ...words: string[]) => !!s && words.every((w) => s.toLowerCase().includes(w.toLowerCase()));
 
+const PAST = [
+  { ref: 'P1', statement: 'Use PostgreSQL for the billing service', date: '2026-11-12', title: 'Billing kickoff' },
+  { ref: 'P2', statement: 'Release every two weeks', date: '2026-11-12', title: 'Billing kickoff' },
+];
+
 const scenarios: Record<string, () => Promise<{ checks: Check[]; ms: number[] }>> = {
+  async 'contradiction: reversing an earlier decision is flagged'() {
+    const { notes, ms } = await analyse(script([
+      ['Ben', 'Honestly, I think we should move billing to MongoDB instead.'],
+      ['Chen', "Yeah, MongoDB would be simpler for us. Let's switch billing to MongoDB."],
+      ['Asha', 'Okay, MongoDB for billing then.'],
+    ]), { pastDecisions: PAST });
+    const d = notes.decisions.find((x) => has(x.statement + x.options.join(' '), 'mongo'));
+    return {
+      ms,
+      checks: [
+        check('a MongoDB decision is recorded', !!d, notes.decisions),
+        check('it is linked to the earlier PostgreSQL decision', d?.contradicts?.ref === 'P1', d),
+        check('the release cadence is not flagged', !notes.decisions.some((x) => x.contradicts?.ref === 'P2'), notes.decisions),
+      ],
+    };
+  },
+
+  async 'contradiction: reconfirming the same choice is not flagged'() {
+    const { notes, ms } = await analyse(script([
+      ['Asha', 'Just to confirm, billing stays on PostgreSQL, right?'],
+      ['Ben', 'Yes, PostgreSQL for billing, as we agreed.'],
+      ['Chen', "And we'll add a read replica for reports."],
+    ]), { pastDecisions: PAST });
+    return { ms, checks: [check('nothing flagged as a contradiction', !notes.decisions.some((x) => x.contradicts), notes.decisions)] };
+  },
+
   async 'dispute: "okay, let\'s proceed" is not a decision'() {
     const { notes, ms } = await analyse(script([
       ['Asha', "Let's use MongoDB for the new service."],

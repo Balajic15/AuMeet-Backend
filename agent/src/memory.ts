@@ -22,10 +22,11 @@ interface SessionRow {
 const day = (d?: Date) => (d ? new Date(d).toISOString().slice(0, 10) : 'an earlier date');
 
 /** Text block for the assistant's instructions; '' when this is the first session. */
-export async function earlierSessionsBrief(db: Db, meetingCode: string, currentSessionId: string, max = 3): Promise<string> {
+export async function earlierSessionsBrief(db: Db, meetingCode: string | string[], currentSessionId: string, max = 3): Promise<string> {
+  const codes = Array.isArray(meetingCode) ? meetingCode : [meetingCode];
   const rows = (await db
     .collection('meeting_insights')
-    .find({ meetingCode, sessionId: { $ne: currentSessionId } })
+    .find({ meetingCode: { $in: codes }, sessionId: { $ne: currentSessionId } })
     .sort({ startedAt: -1 })
     .limit(max)
     .project({ sessionId: 1, title: 1, startedAt: 1, recap: 1, insights: 1 })
@@ -34,7 +35,7 @@ export async function earlierSessionsBrief(db: Db, meetingCode: string, currentS
 
   const parts: string[] = [];
   for (const s of rows.reverse()) {
-    const lines = [`Session on ${day(s.startedAt)}:`];
+    const lines = [`Session on ${day(s.startedAt)}${s.title ? ` ("${s.title}")` : ''}:`];
     const summary = s.recap?.overview || s.insights?.summary;
     if (summary) lines.push(`  Summary: ${summary}`);
     const agreed = (s.insights?.decisions ?? []).filter((d) => d.status === 'agreed').map((d) => d.statement);
@@ -49,7 +50,7 @@ export async function earlierSessionsBrief(db: Db, meetingCode: string, currentS
   }
   if (parts.length === 0) return '';
 
-  return `EARLIER SESSIONS OF THIS SAME MEETING (oldest first). Use this when people refer to "last time",
+  return `EARLIER SESSIONS OF THIS MEETING (and of the meeting it follows up on), oldest first. Use this when people refer to "last time",
 follow up on open tasks, or revisit unresolved decisions. Say which session something came from.
 ${parts.join('\n')}`;
 }
@@ -66,7 +67,7 @@ export interface HistoryHit {
  */
 export function historySearcher(
   db: Db,
-  opts: { apiKey: string; model: string; dims: number; meetingCode: string; source?: 'history' | 'documents' },
+  opts: { apiKey: string; model: string; dims: number; meetingCode: string | (() => string[]); source?: 'history' | 'documents' },
 ) {
   const ai = new GoogleGenAI({ apiKey: opts.apiKey });
   const col = db.collection('memory_chunks');
@@ -82,7 +83,7 @@ export function historySearcher(
     const q = raw.map((x) => x / len);
 
     const chunks = await col
-      .find({ meetingCode: opts.meetingCode, kind: opts.source === 'documents' ? 'document' : { $ne: 'document' } })
+      .find({ meetingCode: { $in: typeof opts.meetingCode === 'function' ? opts.meetingCode() : [opts.meetingCode] }, kind: opts.source === 'documents' ? 'document' : { $ne: 'document' } })
       .sort({ startedAt: -1 })
       .limit(2000)
       .project({ kind: 1, text: 1, startedAt: 1, embedding: 1 })

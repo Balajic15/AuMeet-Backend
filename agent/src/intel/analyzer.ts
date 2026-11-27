@@ -12,7 +12,11 @@ export interface AnalyzerOptions {
   onUpdate: (insights: Insights) => void;
   onError?: (err: unknown) => void;
   /** Host's goal/agenda; read on every run so edits during the meeting apply. */
-  prep?: () => { goal: string; agenda: Array<{ id: string; title: string; minutes: number | null }> };
+  prep?: () => {
+    goal: string;
+    agenda: Array<{ id: string; title: string; minutes: number | null }>;
+    pastDecisions?: Array<{ ref: string; statement: string; date: string; title: string }>;
+  };
   /** Run once this many new human lines have arrived. */
   batchSize?: number;
   /** …or after this much quiet with at least one new line. */
@@ -53,6 +57,37 @@ export class MeetingAnalyzer {
 
   get insights(): Insights {
     return this.state;
+  }
+
+  /**
+   * Make the goal, agenda and follow-ups part of the notes before anything was analysed (and again after
+   * the host edits them). Progress already tracked for an agenda item is kept.
+   */
+  seed(s: {
+    carryover: Insights['carryover'];
+    goal: string;
+    agenda: Array<{ id: string; title: string; minutes: number | null }>;
+    now: Date;
+  }): void {
+    const now = s.now.toISOString();
+    const goalText = s.goal.trim();
+    const prevGoal = this.state.goal;
+    const before = new Map(this.state.agenda.map((a) => [a.id, a]));
+    this.state = {
+      ...this.state,
+      carryover: s.carryover ?? null,
+      goal: goalText
+        ? prevGoal && prevGoal.text === goalText
+          ? prevGoal
+          : { text: goalText, status: prevGoal?.status ?? 'on_track', reason: prevGoal?.reason ?? '', since: now }
+        : null,
+      agenda: s.agenda.map((item) => {
+        const old = before.get(item.id);
+        return old
+          ? { ...old, title: item.title, minutes: item.minutes }
+          : { id: item.id, title: item.title, minutes: item.minutes, status: 'not_started' as const, note: '', startedAt: null, doneAt: null };
+      }),
+    };
   }
 
   /** Call after every new human utterance (voice or chat). */
@@ -126,6 +161,7 @@ export class MeetingAnalyzer {
           final,
           goal: prep?.goal,
           agenda: prep?.agenda,
+          pastDecisions: prep?.pastDecisions,
           elapsedMinutes: Math.round((this.now() - all[0]!.at) / 60_000),
         }),
       );
@@ -136,6 +172,7 @@ export class MeetingAnalyzer {
         now: new Date(this.now()),
         goal: prep?.goal,
         agendaPlan: prep?.agenda,
+        pastDecisions: prep?.pastDecisions,
       });
       this.pending = Math.max(0, this.pending - consumed);
       this.opts.onUpdate(this.state);

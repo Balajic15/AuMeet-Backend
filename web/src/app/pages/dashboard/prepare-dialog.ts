@@ -4,6 +4,7 @@ import {
   ACCEPTED_DOCUMENTS,
   MAX_DOCUMENT_MB,
   MeetingsService,
+  type Carryover,
   type Meeting,
   type MeetingDocumentInfo,
 } from '../../core/meetings.service';
@@ -59,6 +60,32 @@ interface Row {
         }
       </section>
 
+      @if (choices().length) {
+        <section>
+          <label class="lbl" for="followup">Follow-up to <span class="opt">(optional)</span></label>
+          <select id="followup" class="input" [value]="followUpOf() ?? ''" (change)="pickFollowUp($any($event.target).value)">
+            <option value="">Not a follow-up</option>
+            @for (c of choices(); track c.code) {
+              <option [value]="c.code">{{ c.title }}{{ c.when ? ' · ' + c.when : '' }}</option>
+            }
+          </select>
+          <p class="hint">The AI starts with what was left open there and notices if a past decision is being reversed.</p>
+          @if (carry(); as c) {
+            <div class="carry">
+              <span class="carry-h">Carries over from “{{ c.fromTitle }}”{{ c.fromDate ? ', ' + c.fromDate : '' }}</span>
+              <ul>
+                @for (t of c.tasks; track $index) {
+                  <li>{{ t.task }} – {{ t.owner || 'no owner' }}@if (t.dueDate) {, due {{ t.dueDate }}}@if (t.overdue) {<span class="overdue"> · overdue</span>}</li>
+                }
+                @for (d of c.decisions; track $index) { <li>Undecided: {{ d.statement }}</li> }
+              </ul>
+            </div>
+          } @else if (followUpOf() && !loadingCarry()) {
+            <p class="hint">Nothing was left open there.</p>
+          }
+        </section>
+      }
+
       <section>
         <span class="lbl">Documents for the AI</span>
         <p class="hint">PDF, Word, PowerPoint, text or Markdown, up to {{ maxMb }} MB each. The AI reads the text; files aren't stored.</p>
@@ -94,6 +121,12 @@ interface Row {
     .intro { margin: -6px 0 18px; color: var(--text-muted); font-size: 14px; line-height: 1.5; }
     section { margin-bottom: 22px; }
     .lbl { display: block; margin-bottom: 8px; font-weight: 600; font-size: 15px; }
+    .opt { color: var(--text-muted); font-weight: 400; font-size: 13px; }
+    select.input { height: 42px; font-size: 14.5px; }
+    .carry { margin-top: 10px; padding: 10px 12px; border: 1px solid #262626; font-size: 14px;
+      ul { margin: 6px 0 0; padding-left: 18px; } li { margin: 3px 0; } }
+    .carry-h { color: var(--text-muted); font-size: 13px; }
+    .overdue { color: var(--danger); font-size: 12.5px; }
     .lbl-row { display: flex; justify-content: space-between; align-items: baseline; }
     .total { color: var(--text-muted); font-size: 13px; }
     .input.area { height: auto; padding: 10px 14px; font-size: 15px; line-height: 1.5; resize: vertical; }
@@ -125,6 +158,8 @@ export class PrepareDialog implements OnInit {
   private readonly toast = inject(ToastService);
 
   readonly meeting = input.required<Meeting>();
+  /** The host's other meetings, newest first (choices for "Follow-up to"). */
+  readonly others = input<Meeting[]>([]);
   readonly saved = output<Meeting>();
   readonly closed = output<void>();
 
@@ -136,6 +171,35 @@ export class PrepareDialog implements OnInit {
   protected readonly uploading = signal<string | null>(null);
   protected readonly saving = signal(false);
   protected readonly error = signal<string | null>(null);
+  protected readonly followUpOf = signal<string | null>(null);
+  protected readonly carry = signal<Carryover | null>(null);
+  protected readonly loadingCarry = signal(false);
+
+  protected choices(): Array<{ code: string; title: string; when: string }> {
+    return this.others()
+      .filter((m) => m.code !== this.meeting().code)
+      .slice(0, 50)
+      .map((m) => {
+        const d = m.startedAt ?? m.scheduledFor ?? m.createdAt;
+        return { code: m.code, title: m.title, when: d ? new Date(d).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) : '' };
+      });
+  }
+
+  protected pickFollowUp(code: string): void {
+    this.followUpOf.set(code || null);
+    void this.loadCarry();
+  }
+
+  private async loadCarry(): Promise<void> {
+    this.loadingCarry.set(true);
+    try {
+      this.carry.set(await this.meetings.carryover(this.meeting().code, this.followUpOf()));
+    } catch {
+      this.carry.set(null);
+    } finally {
+      this.loadingCarry.set(false);
+    }
+  }
 
   protected totalMinutes(): number {
     return this.rows().reduce((s, r) => s + (Number(r.minutes) || 0), 0);
@@ -147,6 +211,8 @@ export class PrepareDialog implements OnInit {
     const agenda = m.prep?.agenda ?? [];
     this.rows.set(agenda.length ? agenda.map((a) => ({ id: a.id, title: a.title, minutes: a.minutes ? String(a.minutes) : '' })) : [{ title: '', minutes: '' }]);
     void this.meetings.documents(m.code).then((d) => this.docs.set(d), () => this.docs.set([]));
+    this.followUpOf.set(m.prep?.followUpOf ?? null);
+    void this.loadCarry();
   }
 
   protected setRow(i: number, key: 'title' | 'minutes', value: string): void {
@@ -206,7 +272,7 @@ export class PrepareDialog implements OnInit {
     this.saving.set(true);
     this.error.set(null);
     try {
-      const updated = await this.meetings.update(this.meeting().code, { prep: { goal: this.goal().trim(), agenda } });
+      const updated = await this.meetings.update(this.meeting().code, { prep: { goal: this.goal().trim(), agenda, followUpOf: this.followUpOf() } });
       this.toast.show('Meeting prepared');
       this.saved.emit(updated);
     } catch (err) {

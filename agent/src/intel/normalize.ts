@@ -1,4 +1,4 @@
-import type { ActionItem, AgendaProgress, Decision, GoalProgress, Insights, ModelOutput, OpenQuestion, Topic } from './schema.js';
+import type { ActionItem, AgendaProgress, Decision, GoalProgress, Insights, ModelOutput, OpenQuestion, PastDecisionRef, Topic } from './schema.js';
 import type { AgendaPlan } from '../prep.js';
 
 export interface Person {
@@ -16,6 +16,8 @@ export interface NormalizeContext {
   /** Host's preparation; progress is only tracked against these. */
   goal?: string;
   agendaPlan?: AgendaPlan[];
+  /** Agreed decisions from earlier meetings, referenced by the model as P1, P2, … */
+  pastDecisions?: PastDecisionRef[];
 }
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -73,6 +75,7 @@ export function normalize(prev: Insights, out: ModelOutput, ctx: NormalizeContex
   const prevDecisions = new Map(prev.decisions.map((d) => [d.id, d]));
   const decisionId = nextIdFactory('d', prevDecisions.keys());
   const decisions: Decision[] = [];
+  const past = new Map((ctx.pastDecisions ?? []).map((p) => [p.ref.toUpperCase(), p]));
   for (const d of out.decisions) {
     const statement = clean(d.statement);
     if (!statement) continue;
@@ -90,6 +93,8 @@ export function normalize(prev: Insights, out: ModelOutput, ctx: NormalizeContex
       objectors: uniq(d.objectors),
       // Only an unsettled decision can need confirmation.
       confirmationNeeded: d.status === 'agreed' || d.status === 'rejected' ? null : clean(d.confirmationNeeded),
+      // Once spotted, a conflict stays visible (the model may stop repeating it on later runs).
+      contradicts: past.get((d.contradicts ?? '').trim().toUpperCase()) ?? old?.contradicts ?? null,
       evidence: evidence([...(old?.evidence ?? []), ...d.evidence]),
       firstSeenAt: old?.firstSeenAt ?? now,
       updatedAt: now,
@@ -154,6 +159,7 @@ export function normalize(prev: Insights, out: ModelOutput, ctx: NormalizeContex
     openQuestions,
     goal: mergeGoal(prev.goal, out, ctx),
     agenda: mergeAgenda(prev.agenda, out, ctx),
+    carryover: prev.carryover ?? null,
     analyzedThrough: Math.max(prev.analyzedThrough, ctx.analyzedThrough),
     updatedAt: now,
   };

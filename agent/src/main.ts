@@ -40,6 +40,7 @@ import { emptyPrep, loadPrep, renderPrep, type MeetingPrep } from './prep.js';
 import { addressedToPerson, looksLikeQuestion, shouldAnswerQuestion } from './intervene/question.js';
 import { connectMongo } from './db.js';
 import { earlierSessionsBrief, historySearcher } from './memory.js';
+import { FOLLOW_UP_ITEM, loadContinuity, renderCarryover, type Continuity } from './carryover.js';
 import { z } from 'zod';
 import { MeetingAnalyzer } from './intel/analyzer.js';
 import { geminiAnalyzer } from './intel/gemini.js';
@@ -178,18 +179,32 @@ export default defineAgent<ProcData>({
     // ---------- memory of earlier sessions of this meeting link ----------
     let earlier = '';
     let prep: MeetingPrep = emptyPrep();
-    const tools: Record<string, ReturnType<typeof llm.tool>> = {};
-    if (mongo) {
+    let continuity: Continuity = { carryover: null, pastDecisions: [] };
+    /** This meeting link plus the meeting it follows up on (host's choice in Prepare). */
+    const memoryCodes = () => [info.meetingCode, ...(prep.followUpOf ? [prep.followUpOf] : [])];
+    const loadMemory = async () => {
+      if (!mongo) return;
       try {
-        earlier = await earlierSessionsBrief(mongo.db, info.meetingCode, ctx.job.id);
+        [earlier, continuity] = await Promise.all([
+          earlierSessionsBrief(mongo.db, memoryCodes(), ctx.job.id),
+          loadContinuity(mongo.db, memoryCodes(), ctx.job.id),
+        ]);
       } catch (err) {
         logger.warn({ err }, 'could not load earlier sessions');
       }
+    };
+    const tools: Record<string, ReturnType<typeof llm.tool>> = {};
+    if (mongo) {
       try {
         prep = await loadPrep(mongo.db, info.meetingCode);
       } catch (err) {
         logger.warn({ err }, 'could not load meeting preparation');
       }
+      await loadMemory();
+      logger.info(
+        { followUpOf: prep.followUpOf, carryover: !!continuity.carryover, pastDecisions: continuity.pastDecisions.length },
+        'continuity loaded',
+      );
       const searchDocs = historySearcher(mongo.db, {
         apiKey: cfg.GOOGLE_API_KEY,
         model: cfg.EMBEDDING_MODEL,
@@ -211,11 +226,11 @@ export default defineAgent<ProcData>({
         apiKey: cfg.GOOGLE_API_KEY,
         model: cfg.EMBEDDING_MODEL,
         dims: cfg.EMBEDDING_DIMS,
-        meetingCode: info.meetingCode,
+        meetingCode: memoryCodes,
       });
       tools['search_meeting_history'] = llm.tool({
         description:
-          'Search earlier sessions of THIS meeting (same meeting link) for what was said, decided or assigned. ' +
+          'Search earlier sessions of THIS meeting (and of the meeting it follows up on) for what was said, decided or assigned. ' +
           'Use when someone asks about a previous session ("last week", "last time") and the answer is not in your instructions.',
         parameters: z.object({ query: z.string().describe('What to look for, e.g. "database decision"') }),
         execute: async ({ query }) => {
@@ -225,7 +240,7 @@ export default defineAgent<ProcData>({
       });
     }
     const composeBase = () =>
-      [meetingInstructions(info), renderPrep(prep), earlier].filter(Boolean).join('\n\n');
+      [meetingInstructions(info), renderPrep(prep), renderCarryover(continuity.carryover), earlier].filter(Boolean).join('\n\n');
     let baseInstructions = composeBase();
     let latestNotes = '';
     const refreshInstructions = () =>
@@ -248,7 +263,7 @@ export default defineAgent<ProcData>({
       transcript,
       analyze: geminiAnalyzer(structured),
       people: () => [...people.values()],
-      prep: () => ({ goal: prep.goal, agenda: prep.agenda }),
+      prep: () => ({ goal: prep.goal, agenda: trackedAgenda(), pastDecisions: continuity.pastDecisions }),
       onUpdate: (insights) => {
         void sendInsights(insights);
         intervention.notesUpdated();
@@ -260,11 +275,24 @@ export default defineAgent<ProcData>({
       onError: (err) => logger.warn({ err }, 'meeting analysis failed; will retry with the next batch'),
     });
 
+    /** The host's agenda, plus "Follow-ups from last meeting" first when something was left open. */
+    const trackedAgenda = () => (continuity.carryover ? [FOLLOW_UP_ITEM, ...prep.agenda] : prep.agenda);
+    // Goal, agenda and follow-ups are visible (and usable by the facilitator) before the first analysis.
+    const seedNotes = () =>
+      analyzer.seed({
+        carryover: continuity.carryover,
+        goal: prep.goal,
+        agenda: trackedAgenda(),
+        now: new Date(),
+      });
+    seedNotes();
+
     // ---------- adaptive intervention ----------
     let lastLanguage = 'en';
     const agentIdle = () => session.agentState === 'listening' || session.agentState === 'idle';
     const intervention = new InterventionController({
       enabled: info.proactive,
+      facilitator: () => prep.facilitator,
       judge: geminiJudge(structured),
       insights: () => analyzer.insights,
       transcript: () => transcript.all,
@@ -272,7 +300,15 @@ export default defineAgent<ProcData>({
       speak: (message, candidate) => {
         logger.info({ kind: candidate.kind, key: candidate.key }, 'speaking up proactively');
         voiceOut.updateOptions({ language: voiceLanguage(lastLanguage) });
-        session.say(message, { allowInterruptions: true });
+        if (candidate.longForm) {
+          // Opening / wrap-up: composed from the live notes in the assistant's instructions.
+          session.generateReply({
+            instructions: `${candidate.goal} Speak in ${languageName(lastLanguage)}. Nobody asked you – keep it natural and brief.`,
+            allowInterruptions: true,
+          });
+        } else {
+          session.say(message, { allowInterruptions: true });
+        }
       },
       log: (msg, data) => logger.debug(data ?? {}, msg),
     });
@@ -466,7 +502,9 @@ export default defineAgent<ProcData>({
     const greetOnce = () => {
       if (greeted || !humansPresent()) return;
       greeted = true;
-      session.say(GREETING, { allowInterruptions: true });
+      if (analyzer.insights.carryover) void sendInsights(analyzer.insights);
+      // In facilitator mode the opening (goal, agenda, follow-ups) replaces the generic greeting.
+      if (!prep.facilitator) session.say(GREETING, { allowInterruptions: true });
     };
 
     // ---------- live captions ----------
@@ -531,13 +569,23 @@ export default defineAgent<ProcData>({
     let lastPrepVersion: number | null = null;
     const applyRoomSettings = (raw: string | undefined) => {
       try {
-        const s = JSON.parse(raw || '{}') as { aiProactive?: boolean; aiReplyMode?: string; prepVersion?: number };
+        const s = JSON.parse(raw || '{}') as { aiProactive?: boolean; aiReplyMode?: string; aiFacilitator?: boolean; prepVersion?: number };
         if (s.aiReplyMode === 'any' || s.aiReplyMode === 'named') prep.replyMode = s.aiReplyMode;
+        if (typeof s.aiFacilitator === 'boolean' && s.aiFacilitator !== prep.facilitator) {
+          prep.facilitator = s.aiFacilitator;
+          baseInstructions = composeBase();
+          void refreshInstructions();
+          logger.info({ facilitator: s.aiFacilitator }, 'facilitator mode changed by host');
+        }
         if (typeof s.prepVersion === 'number' && s.prepVersion !== lastPrepVersion && mongo) {
           lastPrepVersion = s.prepVersion;
           void loadPrep(mongo.db, info.meetingCode)
-            .then((p) => {
+            .then(async (p) => {
+              const followUpChanged = p.followUpOf !== prep.followUpOf;
               prep = { ...p, replyMode: prep.replyMode };
+              if (followUpChanged) await loadMemory();
+              seedNotes();
+              void sendInsights(analyzer.insights);
               baseInstructions = composeBase();
               void refreshInstructions();
               logger.info({ goal: !!p.goal, agenda: p.agenda.length, documents: p.documents.length }, 'meeting preparation reloaded');
@@ -575,7 +623,9 @@ export default defineAgent<ProcData>({
         emptyTimer = null;
         remember(p);
         // Late joiners get the notes so far right away.
-        if (isHuman(p) && analyzer.insights.analyzedThrough > 0) void sendInsights(analyzer.insights, [p.identity]);
+        if (isHuman(p) && (analyzer.insights.analyzedThrough > 0 || analyzer.insights.carryover)) {
+          void sendInsights(analyzer.insights, [p.identity]);
+        }
       })
       .on(RoomEvent.ParticipantDisconnected, (p) => {
         stopListening(p.identity);
@@ -587,7 +637,9 @@ export default defineAgent<ProcData>({
         }
       });
 
+    const tickTimer = setInterval(() => intervention.tick(), 5_000);
     ctx.addShutdownCallback(async () => {
+      clearInterval(tickTimer);
       if (emptyTimer) clearTimeout(emptyTimer);
       intervention.stop();
       for (const l of listeners.values()) l.close();

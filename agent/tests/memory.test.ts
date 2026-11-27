@@ -39,7 +39,7 @@ afterAll(async () => {
 describe('earlierSessionsBrief', () => {
   it('summarises earlier sessions of the same meeting only, oldest first, excluding the current one', async () => {
     const brief = await earlierSessionsBrief(db, 'abc-defg-hij', 'now');
-    expect(brief).toContain('EARLIER SESSIONS OF THIS SAME MEETING');
+    expect(brief).toContain('EARLIER SESSIONS OF THIS MEETING');
     expect(brief.indexOf('2026-11-12')).toBeLessThan(brief.indexOf('2026-11-19'));
     expect(brief).toContain('Summary: Kicked off the project.');
     expect(brief).toContain('Agreed: Ship weekly');

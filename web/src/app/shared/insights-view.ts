@@ -22,6 +22,20 @@ const STATUS_ORDER: DecisionStatus[] = ['disputed', 'proposed', 'agreed', 'rejec
   imports: [Icon],
   template: `
     @let i = insights();
+    @if (i.carryover; as c) {
+      <section class="block carry">
+        <h3>From last meeting</h3>
+        <p class="carry-from">“{{ c.fromTitle }}”{{ c.fromDate ? ", " + c.fromDate : "" }}</p>
+        <ul>
+          @for (t of c.tasks; track $index) {
+            <li>{{ t.task }} – {{ t.owner || "no owner" }}@if (t.dueDate) {, due {{ t.dueDate }}}@if (t.overdue) {<span class="overdue"> · overdue</span>}</li>
+          }
+          @for (d of c.decisions; track $index) {
+            <li>Undecided: {{ d.statement }}@if (d.options.length) { ({{ d.options.join(" vs ") }})}</li>
+          }
+        </ul>
+      </section>
+    }
     @if (i.goal; as g) {
       <section class="block goal" [class]="'block goal g-' + g.status">
         <h3>Goal</h3>
@@ -81,6 +95,9 @@ const STATUS_ORDER: DecisionStatus[] = ['disputed', 'proposed', 'agreed', 'rejec
             <div class="options">
               @for (o of d.options; track o) { <span class="opt">{{ o }}</span> }
             </div>
+          }
+          @if (d.contradicts; as p) {
+            <p class="conflict"><app-icon name="alert" [size]="14" /> Goes against the decision of {{ p.date }} (“{{ p.title }}”): {{ p.statement }}</p>
           }
           @if (d.confirmationNeeded) {
             <p class="ask"><app-icon name="sparkles" [size]="14" /> {{ d.confirmationNeeded }}</p>
@@ -177,6 +194,12 @@ const STATUS_ORDER: DecisionStatus[] = ['disputed', 'proposed', 'agreed', 'rejec
     }
     .n { padding: 0 7px; border-radius: 99px; background: #2a2a2a; color: var(--text); font-size: 11.5px; letter-spacing: 0; }
     .summary { margin: 0; line-height: 1.6; font-size: 15px; }
+    .carry { padding: 12px 14px; background: var(--surface-sunken); border-left: 3px solid #6b8cff;
+      ul { margin: 6px 0 0; padding-left: 18px; font-size: 14.5px; line-height: 1.5; } li { margin: 3px 0; } }
+    .carry-from { margin: -4px 0 0; color: var(--text-muted); font-size: 13px; }
+    .overdue { color: var(--danger); font-size: 12.5px; }
+    .conflict { display: flex; gap: 6px; align-items: flex-start; margin: 6px 0 0; color: #f5b453; font-size: 13.5px; line-height: 1.45;
+      app-icon { flex: none; margin-top: 2px; } }
     .goal { padding: 12px 14px; background: var(--surface-sunken); border-left: 3px solid #555; }
     .goal.g-on_track, .goal.g-achieved { border-left-color: var(--brand); }
     .goal.g-drifting { border-left-color: #ffb020; }

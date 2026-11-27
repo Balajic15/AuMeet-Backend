@@ -20,6 +20,7 @@ export function renderNotes(i: Insights): string {
       if (d.status === 'disputed' && d.options.length) s += ` (options: ${names(d.options)})`;
       if (d.supporters.length) s += `; supported by ${names(d.supporters)}`;
       if (d.objectors.length) s += `; objections from ${names(d.objectors)}`;
+      if (d.contradicts) s += ` – CONFLICTS with the decision of ${d.contradicts.date}: "${d.contradicts.statement}"`;
       lines.push(s);
     }
   }

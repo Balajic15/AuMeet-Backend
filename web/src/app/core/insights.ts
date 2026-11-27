@@ -17,6 +17,8 @@ export interface Decision {
   supporters: string[];
   objectors: string[];
   confirmationNeeded: string | null;
+  /** An earlier meeting's agreed decision that this one goes against. */
+  contradicts?: { ref: string; statement: string; date: string; title: string } | null;
   evidence: number[];
 }
 
@@ -70,6 +72,13 @@ export interface Insights {
   /** Only when the host prepared a goal / agenda (older notes may not have these). */
   goal?: GoalProgress | null;
   agenda?: AgendaProgress[];
+  /** Left open at the previous meeting. */
+  carryover?: {
+    fromTitle: string;
+    fromDate: string;
+    decisions: Array<{ statement: string; options: string[] }>;
+    tasks: Array<{ task: string; owner: string | null; dueDate: string | null; overdue: boolean }>;
+  } | null;
   topics: Topic[];
   decisions: Decision[];
   actionItems: ActionItem[];
