@@ -62,6 +62,8 @@ const MeetingSchema = new Schema(
       // Code of an earlier meeting (same host) whose open items carry over into this one.
       followUpOf: { type: String },
     },
+    // This meeting's AI behaviour overrides (on top of the host's default).
+    aiBehaviour: { type: Schema.Types.Mixed },
     scheduledFor: { type: Date },
     startedAt: { type: Date },
     endedAt: { type: Date },

@@ -13,16 +13,33 @@ import { geminiStructured } from '../src/gemini.js';
 import { normalize } from '../src/intel/normalize.js';
 import { ANALYST_SYSTEM, analystPrompt } from '../src/intel/prompt.js';
 import { emptyInsights, ModelOutput, type Insights } from '../src/intel/schema.js';
-import { findCandidates } from '../src/intervene/candidates.js';
-import { geminiJudge } from '../src/intervene/judge.js';
-import { addressedToPerson, looksLikeQuestion, shouldAnswerQuestion } from '../src/intervene/question.js';
+import { readFileSync } from 'node:fs';
+import { resolveBehaviour, type Behaviour } from '../src/behaviour.js';
+import { geminiBrain, type BrainInput } from '../src/brain.js';
+import { geminiRouter } from '../src/router.js';
 import type { Utterance } from '../src/transcript.js';
 
 initializeLogger({ pretty: false, level: 'warn' });
 const cfg = config();
 import { parseModels } from '../src/gemini.js';
 const call = geminiStructured({ apiKey: cfg.GOOGLE_API_KEY, models: parseModels(cfg.GEMINI_MODEL, cfg.GEMINI_FALLBACK_MODELS), thinking: cfg.GEMINI_THINKING });
-const judge = geminiJudge(call);
+const brain = geminiBrain(call);
+const route = geminiRouter(call);
+// The real seed profile the server puts in MongoDB.
+const SEED = JSON.parse(readFileSync(new URL('../../server/src/config/ai-behaviour.seed.json', import.meta.url), 'utf8'));
+const behaviourWith = (over: Record<string, unknown> = {}): Behaviour => resolveBehaviour(SEED, over)!;
+
+/** Ask the meeting brain about a moment in a scripted meeting. */
+async function think(notes: Insights, lines: Utterance[], o: Partial<BrainInput> = {}) {
+  const last = lines.at(-1)?.at ?? T0;
+  const t = Date.now();
+  const d = await brain({
+    event: 'pause', now: last + (o.silenceMs ?? 3000), joinedAt: T0, behaviour: behaviourWith(), title: 'Team sync',
+    facilitator: false, present: [...new Set(lines.filter((u) => !u.isAgent).map((u) => u.speakerName))],
+    insights: notes, transcript: lines, silenceMs: 3000, remarks: [], learning: [], prep: '', blocked: [], ...o,
+  });
+  return { d, ms: Date.now() - t };
+}
 
 // Thursday 26 Nov 2026, 10:00 UTC
 const T0 = Date.UTC(2026, 10, 26, 10, 0, 0);
@@ -228,14 +245,20 @@ const scenarios: Record<string, () => Promise<{ checks: Check[]; ms: number[] }>
       ['Ben', 'I can look up ticket prices for March.', 360],
     ]), prep);
     const a1 = notes.agenda.find((a) => a.id === 'a1');
-    const notesAt = T0 + 9 * 60_000;
-    const cands = findCandidates({ ...notes, goal: notes.goal && { ...notes.goal, since: new Date(T0 + 60_000).toISOString() } }, script([['Asha', 'x', 0]]), notesAt, new Set());
+    const lines = script([
+      ['Asha', "Let's start with the database for billing.", 0], ['Ben', 'Before that, did anyone watch the cricket final yesterday?', 30],
+      ['Chen', 'Yes! What a finish, that last over was unbelievable.', 60], ['Ben', 'Kohli was amazing, best innings of the season.', 120],
+      ['Chen', 'And the stadium was packed, I want to go next year.', 180], ['Ben', 'We should plan a team trip to a match.', 240],
+      ['Chen', 'Yes, maybe in March when the league starts.', 300], ['Ben', 'I can look up ticket prices for March.', 360],
+    ]);
+    const steer = await think({ ...notes, goal: notes.goal && { ...notes.goal, since: new Date(T0 + 60_000).toISOString() } }, lines, { prep: `MEETING GOAL: ${prep.goal}` });
+    ms.push(steer.ms);
     return {
       ms,
       checks: [
         check('goal marked drifting/off track', notes.goal?.status === 'drifting' || notes.goal?.status === 'off_track', notes.goal),
         check('database item not done', a1?.status !== 'done', a1),
-        check('a steer-back nudge is a candidate', cands.some((c) => c.kind === 'off_track'), cands.map((c) => c.kind)),
+        check('the brain steers back to the goal', steer.d.speak && (has(steer.d.message, 'database') || has(steer.d.message, 'billing')), steer.d),
       ],
     };
   },
@@ -260,49 +283,117 @@ const scenarios: Record<string, () => Promise<{ checks: Check[]; ms: number[] }>
     };
   },
 
-  async 'speaking up: confirm at a real pause, not mid-debate'() {
+  async 'brain: asks to confirm at a real pause, stays quiet mid-explanation'() {
     const lines = script([
       ['Asha', "Let's use MongoDB."],
       ['Ben', 'PostgreSQL is better for us.'],
       ['Chen', "Okay, let's proceed."],
     ]);
     const { notes, ms } = await analyse(lines);
-    const cand = findCandidates(notes, lines, Date.parse(notes.decisions[0]?.firstSeenAt ?? new Date(T0).toISOString()) + 60_000, new Set())[0];
-    if (!cand) return { ms, checks: [check('a confirmation candidate exists', false, notes.decisions)] };
-    const t1 = Date.now();
-    const atPause = await judge({ candidate: cand, insights: notes, recent: lines, silenceMs: 3000 });
+    const atPause = await think(notes, lines);
     const midDebate = script([
       ...lines.map((u) => [u.speakerName, u.text] as Line),
       ['Asha', 'Wait, before we move on – Ben, why exactly PostgreSQL?'],
       ['Ben', 'Two reasons, let me explain the first one…'],
     ]);
-    const busy = await judge({ candidate: cand, insights: notes, recent: midDebate, silenceMs: 1900 });
-    ms.push(Date.now() - t1);
+    const busy = await think(notes, midDebate, { silenceMs: 1900 });
+    ms.push(atPause.ms, busy.ms);
     return {
       ms,
       checks: [
-        check('speaks after "let\'s proceed"', atPause.speak && !!atPause.message, atPause),
-        check('asks (doesn\'t decide)', !has(atPause.message, 'we will use') && !has(atPause.message, "we'll go with"), atPause.message),
-        check('stays quiet mid-explanation', !busy.speak, busy),
+        check('speaks after "let\'s proceed"', atPause.d.speak && !!atPause.d.message, atPause.d),
+        check('asks (doesn\'t decide)', !has(atPause.d.message, 'we will use') && !has(atPause.d.message, "we'll go with"), atPause.d.message),
+        check('gives itself a topic key', !!atPause.d.topicKey, atPause.d),
+        check('stays quiet mid-explanation', !busy.d.speak, busy.d),
       ],
     };
   },
 
-  async 'room questions: answer the room, not colleagues'() {
+  async 'brain: does not repeat itself, and backs off after push-back'() {
     const lines = script([
-      ['Asha', 'We agreed PostgreSQL for billing earlier.'],
-      ['Ben', 'And Ravi owns the migration plan.'],
+      ['Asha', "Let's use MongoDB."],
+      ['Ben', 'PostgreSQL is better for us.'],
+      ['Chen', "Okay, let's proceed."],
+      ['AuMeet AI', 'Can we confirm which database we are going with?'],
+      ['Asha', "Not now please, we'll decide that offline."],
+      ['Ben', 'Right. Next: the release notes.'],
     ]);
     const { notes, ms } = await analyse(lines);
-    const ask = (q: string) => shouldAnswerQuestion(call, { question: q, speaker: 'Chen', recent: lines, insights: notes, prepSummary: '' });
-    const q1 = await ask('What did we decide about the database?');
-    const q2 = await ask('How was everyone\'s weekend?');
+    const r = await think(notes, lines, {
+      remarks: [{ id: 'r1', at: lines[3]!.at, intent: 'confirm_decision', topicKey: 'decision:database', message: lines[3]!.text, reaction: 'pending' }],
+    });
+    ms.push(r.ms);
     return {
       ms,
       checks: [
-        check('answers a factual question about the meeting', q1.answer, q1),
-        check('ignores small talk', !q2.answer, q2),
-        check('heuristic skips "Ravi, can you…"', looksLikeQuestion('Ravi, can you send the spec?') && addressedToPerson('Ravi, can you send the spec?', ['Ravi'])),
+        check('does not raise the database again', !(r.d.speak && has(r.d.message, 'database')), r.d),
+        check('judges the reaction as rejected', r.d.reactions.some((x) => x.id === 'r1' && x.reaction === 'rejected'), r.d.reactions),
+      ],
+    };
+  },
+
+  async 'brain: talkativeness and host instructions change what it does'() {
+    const lines = script([
+      ['Asha', 'Somebody should update the API docs at some point.'],
+      ['Ben', 'Yeah. Anyway, the dashboard looks good.'],
+    ]);
+    const { notes, ms } = await analyse(lines);
+    const shy = await think(notes, lines, { behaviour: behaviourWith({ talkativeness: 0.05 }) });
+    const hindi = await think(notes, lines, { behaviour: behaviourWith({ talkativeness: 0.9, customInstructions: 'Always speak Hindi (Devanagari script).' }) });
+    ms.push(shy.ms, hindi.ms);
+    return {
+      ms,
+      checks: [
+        check('nearly-silent setting stays quiet on a minor point', !shy.d.speak, shy.d),
+        check('active setting raises the unowned task', hindi.d.speak, hindi.d),
+        check('follows the host instruction (Hindi)', /[\u0900-\u097F]/.test(hindi.d.message), hindi.d.message),
+      ],
+    };
+  },
+
+  async 'brain: greets on start, as facilitator opens with goal and agenda'() {
+    const notes = { ...emptyInsights(), goal: { text: 'Pick the billing database', status: 'on_track' as const, reason: '', since: new Date(T0).toISOString() },
+      agenda: [{ id: 'a1', title: 'Database choice', minutes: 10, status: 'not_started' as const, note: '', startedAt: null, doneAt: null }] };
+    const plain = await think(emptyInsights(), [], { event: 'start', silenceMs: 4000, present: ['Asha', 'Ben'] });
+    const fac = await think(notes, [], { event: 'start', silenceMs: 4000, present: ['Asha', 'Ben'], facilitator: true, prep: 'MEETING GOAL: Pick the billing database' });
+    return {
+      ms: [plain.ms, fac.ms],
+      checks: [
+        check('introduces itself briefly on start', plain.d.speak && plain.d.message.length < 300, plain.d),
+        check('facilitator opening mentions the goal', fac.d.speak && (has(fac.d.message, 'database') || has(fac.d.message, 'billing')), fac.d),
+      ],
+    };
+  },
+
+  async 'router: follow-ups, misheard name, room questions vs colleagues'() {
+    const recent = script([
+      ['Asha', 'We agreed PostgreSQL for billing earlier.'],
+      ['Ben', 'And Ravi owns the migration plan.'],
+    ]);
+    const b = behaviourWith();
+    const ask = async (who: string, text: string, opts: { room?: boolean; last?: boolean } = {}) =>
+      route({
+        line: script([[who, text]])[0]!, recent, behaviour: b, answerRoomQuestions: !!opts.room, participants: ['Asha', 'Ben', 'Chen', 'Ravi'],
+        lastAnswer: opts.last ? { to: 'Chen', text: 'You agreed on PostgreSQL for billing.', secondsAgo: 6 } : null,
+      });
+    const t = Date.now();
+    const follow = await ask('Chen', 'And who owns the migration?', { last: true });
+    const thanks = await ask('Chen', 'Okay thanks.', { last: true });
+    const room = await ask('Chen', 'What did we decide about the database?', { room: true });
+    const roomOff = await ask('Chen', 'What did we decide about the database?');
+    const colleague = await ask('Asha', 'Ravi, can you send the spec today?', { room: true });
+    const smalltalk = await ask('Ben', "How was everyone's weekend?", { room: true });
+    const misheard = await ask('Asha', 'Oh meat, can you summarise that?');
+    return {
+      ms: [Date.now() - t],
+      checks: [
+        check('answers a follow-up', follow.respond && follow.kind === 'follow_up', follow),
+        check('ignores "okay thanks"', !thanks.respond, thanks),
+        check('answers a room question when allowed', room.respond, room),
+        check('not when room questions are off', !roomOff.respond, roomOff),
+        check('leaves questions to colleagues alone', !colleague.respond, colleague),
+        check('ignores small talk', !smalltalk.respond, smalltalk),
+        check('understands a misheard name', misheard.respond, misheard),
       ],
     };
   },

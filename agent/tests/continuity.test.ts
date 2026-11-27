@@ -4,9 +4,6 @@ import { MeetingAnalyzer } from '../src/intel/analyzer.js';
 import { normalize } from '../src/intel/normalize.js';
 import { analystPrompt } from '../src/intel/prompt.js';
 import { emptyInsights, type AgendaProgress, type Decision, type Insights, type ModelOutput } from '../src/intel/schema.js';
-import { findCandidates } from '../src/intervene/candidates.js';
-import { InterventionController } from '../src/intervene/controller.js';
-import { judgePrompt } from '../src/intervene/judge.js';
 import { MeetingTranscript, type Utterance } from '../src/transcript.js';
 
 const T0 = Date.UTC(2026, 10, 26, 10, 0, 0);
@@ -96,75 +93,3 @@ describe('continuity between meetings', () => {
   });
 });
 
-describe('new reasons to speak up', () => {
-  const carryover = buildContinuity(sessions, new Date('2026-11-26T09:00:00Z')).carryover;
-
-  it('follows up on last meeting once people are talking (not in facilitator mode)', () => {
-    const notes = withNotes({ carryover });
-    expect(findCandidates(notes, [], T0 + 40_000, new Set())).toEqual([]);
-    const [c] = findCandidates(notes, say(1), T0 + 40_000, new Set());
-    expect(c).toMatchObject({ kind: 'carryover', key: 'carryover', minGapMs: 20_000 });
-    expect(c!.goal).toContain('Ravi had "Write the migration plan" due 2026-11-21 (overdue)');
-    expect(findCandidates(notes, say(1), T0 + 40_000, new Set(['carryover']))).toEqual([]);
-    // the facilitator's opening covers it instead
-    expect(findCandidates(notes, say(1), T0 + 40_000, new Set(), undefined, { facilitator: true }).map((x) => x.kind)).toEqual(['open_meeting']);
-  });
-
-  it('flags a contradiction with an earlier agreed decision', () => {
-    const d: Decision = {
-      id: 'd1', topic: 'DB', statement: 'Move billing to MongoDB', status: 'proposed', options: [], proposedBy: ['Ben'],
-      supporters: [], objectors: [], confirmationNeeded: null, evidence: [1], firstSeenAt: iso(T0), updatedAt: iso(T0),
-      contradicts: { ref: 'P1', statement: 'Use PostgreSQL for billing', date: '2026-11-19', title: 'Billing sync' },
-    };
-    const [c] = findCandidates(withNotes({ decisions: [d] }), say(3), T0 + 60_000, new Set());
-    expect(c).toMatchObject({ kind: 'contradiction', key: 'contradiction:d1' });
-    expect(c!.suggestion).toBe('Just flagging: on 2026-11-19 we agreed to use postgresql for billing. Are we changing that?');
-    expect(findCandidates(withNotes({ decisions: [{ ...d, status: 'rejected' }] }), say(3), T0 + 60_000, new Set())).toEqual([]);
-  });
-
-  const agenda = (p: Array<Partial<AgendaProgress>>): AgendaProgress[] =>
-    p.map((x, i) => ({ id: `a${i + 1}`, title: `Item ${i + 1}`, minutes: 10, status: 'not_started', note: '', startedAt: null, doneAt: null, ...x }));
-
-  it('facilitator: opening early, a transition when an item is done, a wrap-up near the end', () => {
-    const f = { facilitator: true };
-    const open = findCandidates(withNotes({ agenda: agenda([{}, {}]) }), [], T0 + 30_000, new Set(), undefined, f);
-    expect(open[0]).toMatchObject({ kind: 'open_meeting', longForm: true, minGapMs: 0 });
-    expect(open[0]!.goal).toContain('Item 1 (10 min), Item 2 (10 min) – 20 minutes in total');
-    // not in a meeting that's long underway
-    expect(findCandidates(withNotes({}), say(20), T0 + 30_000, new Set(), undefined, f).some((c) => c.kind === 'open_meeting')).toBe(false);
-
-    const afterFirst = withNotes({ agenda: agenda([{ status: 'done', startedAt: iso(T0), doneAt: iso(T0 + 9 * 60_000), note: 'Picked SQS' }, {}]) });
-    const raised = new Set(['open']);
-    const next = findCandidates(afterFirst, say(5), T0 + 9.5 * 60_000, raised, undefined, f).find((c) => c.kind === 'agenda_next');
-    expect(next).toMatchObject({ key: 'next:a1' });
-    expect(next!.suggestion).toBe('That covers Item 1. Next up: Item 2, 10 minutes.');
-    // no transition while the next item is already being discussed, and none without facilitator mode
-    expect(findCandidates(withNotes({ agenda: agenda([{ status: 'done', doneAt: iso(T0) }, { status: 'in_progress', startedAt: iso(T0) }, {}]) }), say(5), T0 + 60_000, raised, undefined, f).some((c) => c.kind === 'agenda_next')).toBe(false);
-    expect(findCandidates(afterFirst, say(5), T0 + 9.5 * 60_000, raised).some((c) => c.kind === 'agenda_next')).toBe(false);
-
-    const wrapNotes = withNotes({ agenda: agenda([{ status: 'done', doneAt: iso(T0) }, { status: 'in_progress', startedAt: iso(T0 + 10 * 60_000) }]) });
-    expect(findCandidates(wrapNotes, say(5), T0 + 17 * 60_000, raised, undefined, f).some((c) => c.kind === 'wrap_up')).toBe(false);
-    const wrap = findCandidates(wrapNotes, say(5), T0 + 18 * 60_000, raised, undefined, f);
-    expect(wrap[0]).toMatchObject({ kind: 'wrap_up', key: 'wrapup', longForm: true });
-  });
-
-  it('controller: short gap for follow-ups, facilitation hint for the judge, works in silence via tick', async () => {
-    let now = T0;
-    const judge = vi.fn(async () => ({ speak: true, message: 'From last time…', reason: 'ok' }));
-    const speak = vi.fn();
-    const c = new InterventionController({
-      judge, speak, enabled: true, insights: () => withNotes({ carryover }), transcript: () => say(1, T0),
-      agentIdle: () => true, now: () => now, facilitator: () => false,
-    });
-    c.agentFinishedSpeaking(); // the greeting
-    now = T0 + 31_000; // past warm-up, 31 s after the greeting (< 90 s default cooldown)
-    const v = await c.check();
-    expect(v?.speak).toBe(true);
-    expect(speak).toHaveBeenCalledWith('From last time…', expect.objectContaining({ kind: 'carryover' }));
-
-    const prompt = judgePrompt({ candidate: { key: 'open', kind: 'open_meeting', priority: 50, goal: 'g', suggestion: 's' }, insights: emptyInsights(), recent: [], silenceMs: 3000 });
-    expect(prompt).toContain('facilitation step the host switched on');
-    expect(judgePrompt({ candidate: { key: 'x', kind: 'assign_owner', priority: 1, goal: 'g', suggestion: 's' }, insights: emptyInsights(), recent: [], silenceMs: 3000 })).not.toContain('facilitation step');
-    c.stop();
-  });
-});

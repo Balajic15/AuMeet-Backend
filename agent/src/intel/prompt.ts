@@ -1,3 +1,4 @@
+import { AGENT_DISPLAY_NAME } from '../config.js';
 import { formatUtterances, type Utterance } from '../transcript.js';
 import type { Insights } from './schema.js';
 
@@ -10,7 +11,7 @@ Rules:
   Never drop an item: mark it closed/rejected/done/answered instead.
 - Cite transcript line numbers as evidence for each decision, task and question.
 - Use participant names exactly as written in the transcript. Never invent people, tasks or dates.
-- Lines from "AuMeet AI" are the assistant – it never makes decisions or takes tasks for the team.
+- Lines from "${AGENT_DISPLAY_NAME}" are the assistant – it never makes decisions or takes tasks for the team.
 
 Decisions – be strict, this matters most:
 - "proposed": someone suggested it, nobody objected, nobody explicitly confirmed.

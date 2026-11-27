@@ -163,6 +163,9 @@
                       <button type="button" role="menuitem" (click)="openPrepare(m)">
                         <app-icon name="sparkles" [size]="18" /> Prepare (goal, agenda, files)
                       </button>
+                      <button type="button" role="menuitem" (click)="openAi(m)">
+                        <app-icon name="settings" [size]="18" /> AI behaviour
+                      </button>
                       <button type="button" role="menuitem" (click)="openInvite(m)">
                         <app-icon name="mail" [size]="18" /> Invite by email
                       </button>
@@ -202,6 +205,10 @@
         <button type="button" class="btn btn-primary" (click)="join(m)">Join now</button>
       </div>
     </app-modal>
+  }
+
+  @case ('ai') {
+    <app-meeting-ai-dialog [meeting]="$any(dialog()).meeting" (closed)="dialog.set(null)" />
   }
 
   @case ('prepare') {

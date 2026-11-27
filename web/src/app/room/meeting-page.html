@@ -130,6 +130,7 @@
       @if (panel(); as tab) {
         <app-side-panel [tab]="tab" (tabChange)="panel.set($event)" (closed)="panel.set(null)"
                         [isHost]="isHost()" [meeting]="meeting()" [saving]="savingSettings()"
+                        [talkativeness]="talkativeness()" (talk)="changeTalkativeness($event)"
                         [recordingAvailable]="!!meeting()?.recordingAvailable" [recording]="rs.recording()"
                         [recordingBusy]="recordingBusy()" (record)="toggleRecording()"
                         [invitingAi]="invitingAi()" (inviteAi)="inviteAi()"

@@ -24,6 +24,7 @@ import {
   type MeetingSettings,
   type PendingJoin,
 } from '../core/meetings.service';
+import { AiService } from '../core/ai.service';
 import { Icon } from '../shared/icon';
 import { Modal } from '../shared/modal';
 import { ToastService } from '../shared/toast';
@@ -113,6 +114,9 @@ export class MeetingPage implements OnDestroy {
   protected readonly reactOpen = signal(false);
   protected readonly removing = signal<ParticipantView | null>(null);
   protected readonly savingSettings = signal(false);
+  private readonly ai = inject(AiService);
+  /** Host only: the AI's current talkativeness in this meeting. */
+  protected readonly talkativeness = signal<number | null>(null);
   /** Host: people waiting to be let in. */
   protected readonly pending = signal<PendingJoin[]>([]);
   protected readonly recordingBusy = signal(false);
@@ -188,6 +192,7 @@ export class MeetingPage implements OnDestroy {
     try {
       const m = await this.meetings.get(code);
       this.meeting.set(m);
+      if (m.isHost) void this.ai.meeting(code).then((r) => this.talkativeness.set(r.effective.talkativeness), () => {});
       this.title.setTitle(`${m.title} · AuMeet`);
       if (m.status === 'ended') {
         this.phase.set('after');
@@ -494,6 +499,23 @@ export class MeetingPage implements OnDestroy {
       if (settings.locked !== undefined) this.toast.show(settings.locked ? 'Meeting locked' : 'Meeting unlocked');
       if (settings.aiEnabled !== undefined) this.toast.show(settings.aiEnabled ? 'Inviting the AI participant…' : 'AI participant removed');
     } catch (err) {
+      this.toast.error(apiErrorMessage(err, 'Could not change that setting.'));
+    } finally {
+      this.savingSettings.set(false);
+    }
+  }
+
+  /** Host: live talkativeness slider (merged into this meeting's AI settings, applied right away). */
+  protected async changeTalkativeness(v: number): Promise<void> {
+    const m = this.meeting();
+    if (!m) return;
+    const before = this.talkativeness();
+    this.talkativeness.set(v);
+    this.savingSettings.set(true);
+    try {
+      await this.ai.saveMeeting(m.code, { talkativeness: v }, 'merge');
+    } catch (err) {
+      this.talkativeness.set(before);
       this.toast.error(apiErrorMessage(err, 'Could not change that setting.'));
     } finally {
       this.savingSettings.set(false);

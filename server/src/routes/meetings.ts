@@ -32,6 +32,7 @@ import { meetingLinkFor } from '../utils/links.js';
 import { generateMeetingCode, MEETING_CODE_RE } from '../utils/meetingCode.js';
 import { badRequest, conflict, forbidden, gone, notFound } from '../utils/httpError.js';
 import { env } from '../config/env.js';
+import { BehaviourOverride, Behaviour, defaultBehaviour, mergeLayers, resolve } from '../services/aiBehaviour.js';
 
 const router = Router();
 
@@ -94,6 +95,10 @@ const UpdateBody = z
     title: z.string().trim().min(1).max(120).optional(),
     scheduledFor: z.coerce.date().nullable().optional(),
     settings: z.lazy(() => SettingsInput).optional(),
+    /** Merged into this meeting's AI behaviour; null resets it to the host's default. */
+    aiBehaviour: BehaviourOverride.nullable().optional(),
+    /** "merge" (default) adds to the current overrides, e.g. a live slider; "replace" sets them exactly. */
+    aiBehaviourMode: z.enum(['merge', 'replace']).optional(),
   })
   .refine((b) => Object.keys(b).length > 0, 'Nothing to update');
 
@@ -205,6 +210,18 @@ router.patch('/:code', requireAuth, async (req, res) => {
   if (body.settings?.aiReplyMode !== undefined) meeting.settings!.aiReplyMode = body.settings.aiReplyMode;
   if (body.settings?.aiFacilitator !== undefined) meeting.settings!.aiFacilitator = body.settings.aiFacilitator;
   if (body.settings?.followUpEmail !== undefined) meeting.settings!.followUpEmail = body.settings.followUpEmail;
+  if (body.aiBehaviour !== undefined) {
+    if (body.aiBehaviour === null) {
+      meeting.set('aiBehaviour', undefined);
+    } else {
+      const next = body.aiBehaviourMode === 'replace' ? mergeLayers(body.aiBehaviour) : mergeLayers(meeting.get('aiBehaviour') ?? {}, body.aiBehaviour);
+      const host = await UserModel.findById(meeting.host).select({ aiBehaviour: 1 }).lean();
+      const check = Behaviour.safeParse(mergeLayers(await defaultBehaviour(), (host as { aiBehaviour?: unknown } | null)?.aiBehaviour, next));
+      if (!check.success) throw badRequest('These AI settings are not valid together');
+      meeting.set('aiBehaviour', next);
+      meeting.markModified('aiBehaviour');
+    }
+  }
   if (body.prep?.followUpOf !== undefined) {
     meeting.set('prep.followUpOf', (await checkFollowUpOf(req.auth!.sub, body.prep.followUpOf, meeting.code)) ?? undefined);
   }
@@ -224,6 +241,7 @@ router.patch('/:code', requireAuth, async (req, res) => {
       body.settings?.aiProactive !== undefined ||
       body.settings?.aiReplyMode !== undefined ||
       body.settings?.aiFacilitator !== undefined ||
+      body.aiBehaviour !== undefined ||
       body.prep !== undefined
     ) {
       await pushRoomState(meeting);
@@ -560,6 +578,16 @@ const publicDoc = (d: { _id: unknown; filename: string; mimeType: string; sizeBy
 
 // What would carry over into this meeting: open items of the latest earlier session of this link and/or
 // of the meeting it follows up on (?from=<code> previews a choice before it is saved). Host only.
+// The AI behaviour for this meeting: the host's default, this meeting's overrides, and the result.
+router.get('/:code/ai-behaviour', requireAuth, async (req, res) => {
+  const meeting = await findByCode(req.params.code as string);
+  assertHost(req, meeting);
+  const host = await UserModel.findById(meeting.host).select({ aiBehaviour: 1 }).lean();
+  const account = resolve(await defaultBehaviour(), (host as { aiBehaviour?: unknown } | null)?.aiBehaviour);
+  const override = (meeting.get('aiBehaviour') ?? null) as BehaviourOverride | null;
+  res.json({ account, meeting: override, effective: resolve(account, override) });
+});
+
 router.get('/:code/carryover', requireAuth, async (req, res) => {
   const meeting = await findByCode(req.params.code as string);
   assertHost(req, meeting);

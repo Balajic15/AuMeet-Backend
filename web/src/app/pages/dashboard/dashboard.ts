@@ -16,6 +16,7 @@ import { MemoryService, type MyTask, type Overview } from '../../core/memory.ser
 import { AskBox } from './ask-box';
 import { MyTasks } from './my-tasks';
 import { PrepareDialog } from './prepare-dialog';
+import { MeetingAiDialog } from './meeting-ai-dialog';
 
 type Tab = 'upcoming' | 'recent' | 'tasks';
 type Dialog =
@@ -24,7 +25,8 @@ type Dialog =
   | { kind: 'settings'; meeting: Meeting }
   | { kind: 'end'; meeting: Meeting }
   | { kind: 'invite'; meeting: Meeting }
-  | { kind: 'prepare'; meeting: Meeting };
+  | { kind: 'prepare'; meeting: Meeting }
+  | { kind: 'ai'; meeting: Meeting };
 
 /** Turns a Date into the value a <input type="datetime-local"> expects (local time). */
 function toLocalInput(d: Date): string {
@@ -41,7 +43,7 @@ function nextHalfHour(): Date {
 @Component({
   selector: 'app-dashboard',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [Icon, Modal, UserMenu, ReactiveFormsModule, RouterLink, AskBox, MyTasks, PrepareDialog],
+  imports: [Icon, Modal, UserMenu, ReactiveFormsModule, RouterLink, AskBox, MyTasks, PrepareDialog, MeetingAiDialog],
   host: { '(document:click)': 'closeMenus($event)' },
   templateUrl: './dashboard.html',
   styleUrl: './dashboard.scss',
@@ -303,6 +305,11 @@ export class Dashboard {
 
   protected readonly inviteEmails = new FormControl('', { nonNullable: true });
   protected readonly inviteMessage = new FormControl('', { nonNullable: true });
+
+  protected openAi(m: Meeting): void {
+    this.rowMenu.set(null);
+    this.dialog.set({ kind: 'ai', meeting: m });
+  }
 
   protected openPrepare(m: Meeting): void {
     this.rowMenu.set(null);

@@ -11,6 +11,7 @@ import {
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Icon } from '../shared/icon';
+import { talkLabel } from '../core/ai.service';
 import { initials } from '../shared/user-menu';
 import { ToastService } from '../shared/toast';
 import { RoomService, type ParticipantView } from './room.service';
@@ -120,6 +121,14 @@ export type PanelTab = 'chat' | 'people' | 'insights';
                    (change)="setting.emit({ aiReplyMode: $any($event.target).checked ? 'any' : 'named' })" />
             AI also answers questions asked to the room
           </label>
+          @if (talkativeness() !== null && m.settings.aiEnabled && m.settings.aiProactive) {
+            <label class="slider sub">
+              <span>Speaks up: <strong>{{ talkLabel(talkLiveValue() ?? talkativeness()!) }}</strong></span>
+              <input type="range" min="0" max="1" step="0.05" [value]="talkativeness()" [disabled]="saving()"
+                     (input)="talkLiveValue.set(+$any($event.target).value)"
+                     (change)="talk.emit(+$any($event.target).value); talkLiveValue.set(null)" />
+            </label>
+          }
           <label class="switch sub">
             <input type="checkbox" [checked]="m.settings.aiFacilitator" [disabled]="saving() || !m.settings.aiEnabled"
                    (change)="setting.emit({ aiFacilitator: $any($event.target).checked })" />
@@ -177,6 +186,8 @@ export type PanelTab = 'chat' | 'people' | 'insights';
     }
   `,
   styles: `
+    .slider { display: flex; flex-direction: column; gap: 6px; padding: 6px 0 6px 26px; font-size: 14px;
+      input { width: 100%; accent-color: var(--accent, #3df2b1); } }
     :host { display: flex; flex-direction: column; min-height: 0; background: var(--surface); border-left: 1px solid #222; }
     header { display: flex; align-items: center; justify-content: space-between; padding: 0 8px 0 12px; border-bottom: 1px solid var(--border); }
     .tabs { display: flex; }
@@ -248,6 +259,11 @@ export class SidePanel {
   readonly meeting = input<Meeting | null>(null);
   readonly saving = input(false);
   readonly setting = output<Partial<MeetingSettings>>();
+  /** How readily the AI speaks up (0–1), adjustable live. null while unknown. */
+  readonly talkativeness = input<number | null>(null);
+  readonly talk = output<number>();
+  protected talkLabel = talkLabel;
+  protected readonly talkLiveValue = signal<number | null>(null);
   readonly mute = output<string>();
   readonly remove = output<ParticipantView>();
   readonly recordingAvailable = input(false);

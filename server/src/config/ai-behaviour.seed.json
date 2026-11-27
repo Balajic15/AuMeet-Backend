@@ -1,0 +1,32 @@
+{
+  "name": "AuMeet",
+  "wakeWords": ["Au Meet", "Oh Meet", "O Meet", "All Meet", "Aw Meet", "Ow Meet", "Hey Meet", "ऑमीट", "औमीट", "ओमीट"],
+  "talkativeness": 0.5,
+  "tone": "neutral",
+  "replyLength": "brief",
+  "watchFor": {
+    "decisions": true,
+    "owners": true,
+    "disputes": true,
+    "goal": true,
+    "time": true,
+    "followUps": true,
+    "contradictions": true
+  },
+  "customInstructions": "",
+  "learnFromReactions": true,
+  "limits": {
+    "minGapSeconds": 60,
+    "maxPerTenMinutes": 4,
+    "pauseMs": 1800,
+    "warmupSeconds": 20,
+    "repeatTopicMinutes": 15,
+    "minCheckSeconds": 8
+  },
+  "engine": {
+    "analysisBatchLines": 4,
+    "analysisIdleSeconds": 12,
+    "analysisMinIntervalSeconds": 15,
+    "contextLines": 30
+  }
+}

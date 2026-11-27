@@ -10,6 +10,7 @@ import { logger } from './logger.js';
 import authRoutes from './routes/auth.js';
 import meetingRoutes from './routes/meetings.js';
 import memoryRoutes from './routes/memory.js';
+import aiRoutes from './routes/ai.js';
 import livekitWebhook from './routes/livekitWebhook.js';
 import { csrfGuard } from './middleware/auth.js';
 import { errorHandler, notFoundHandler } from './middleware/error.js';
@@ -69,6 +70,7 @@ export function createApp() {
   // Each question costs an embedding + a model call.
   app.use('/api/memory/ask', limiter(40));
   app.use('/api/memory', memoryRoutes);
+  app.use('/api/ai', aiRoutes);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

@@ -1,3 +1,4 @@
+import { AGENT_DISPLAY_NAME } from './config.js';
 import type { Collection, Db } from 'mongodb';
 import { log } from '@livekit/agents';
 
@@ -62,7 +63,7 @@ export function formatUtterances(items: readonly Utterance[], timeZone?: string)
     .map((u) => {
       const t = new Date(u.at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone });
       const via = u.channel === 'chat' ? ' (in chat)' : '';
-      return `[${t}] ${u.isAgent ? 'AuMeet AI' : u.speakerName}${via}: ${u.text}`;
+      return `[${t}] ${u.isAgent ? AGENT_DISPLAY_NAME : u.speakerName}${via}: ${u.text}`;
     })
     .join('\n');
 }

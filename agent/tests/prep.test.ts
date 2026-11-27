@@ -3,8 +3,6 @@ import { normalize } from '../src/intel/normalize.js';
 import { analystPrompt } from '../src/intel/prompt.js';
 import { renderNotes } from '../src/intel/render.js';
 import { emptyInsights, type ModelOutput } from '../src/intel/schema.js';
-import { findCandidates } from '../src/intervene/candidates.js';
-import { addressedToPerson, looksLikeQuestion } from '../src/intervene/question.js';
 import { renderPrep } from '../src/prep.js';
 import type { Utterance } from '../src/transcript.js';
 
@@ -66,67 +64,6 @@ describe('goal and agenda progress', () => {
     expect(p).toContain('a3: Budget – not_started');
     expect(p).toContain('Minutes since the meeting started: 7');
     expect(renderNotes(cur)).toContain('- Database choice: in progress');
-  });
-});
-
-describe('keeping the meeting on track', () => {
-  const at = (ms: number) => new Date(T0 + ms).toISOString();
-
-  it('nudges when the discussion has been off the goal for a while, and again later', () => {
-    const notes = {
-      ...emptyInsights(),
-      goal: { text: goal, status: 'off_track' as const, reason: 'talking about the offsite', since: at(0) },
-      agenda: [{ id: 'a1', title: 'Database choice', minutes: 10, status: 'not_started' as const, note: '', startedAt: null, doneAt: null }],
-    };
-    expect(findCandidates(notes, [], T0 + 2 * 60_000, new Set())).toEqual([]);
-    const [c] = findCandidates(notes, [], T0 + 4 * 60_000, new Set());
-    expect(c).toMatchObject({ kind: 'off_track' });
-    expect(c!.suggestion).toContain('next up is Database choice');
-    // same 10-minute window: raised once; next window: may raise again
-    expect(findCandidates(notes, [], T0 + 5 * 60_000, new Set([c!.key]))).toEqual([]);
-    expect(findCandidates(notes, [], T0 + 15 * 60_000, new Set([c!.key]))[0]?.kind).toBe('off_track');
-  });
-
-  it('flags an agenda item running over its time box', () => {
-    const notes = {
-      ...emptyInsights(),
-      agenda: [{ id: 'a1', title: 'Database choice', minutes: 10, status: 'in_progress' as const, note: '', startedAt: at(0), doneAt: null }],
-    };
-    expect(findCandidates(notes, [], T0 + 11 * 60_000, new Set())).toEqual([]); // inside the 2-minute grace
-    const [c] = findCandidates(notes, [], T0 + 13 * 60_000, new Set());
-    expect(c).toMatchObject({ kind: 'over_time', key: 'overtime:a1' });
-  });
-
-  it('warns when most of the planned time is gone and items haven\'t started', () => {
-    const notes = {
-      ...emptyInsights(),
-      agenda: [
-        { id: 'a1', title: 'Database choice', minutes: 10, status: 'done' as const, note: '', startedAt: at(0), doneAt: at(9 * 60_000) },
-        { id: 'a2', title: 'Owners', minutes: 10, status: 'not_started' as const, note: '', startedAt: null, doneAt: null },
-      ],
-    };
-    const transcript = lines(1);
-    expect(findCandidates(notes, transcript, T0 + 15 * 60_000, new Set())).toEqual([]);
-    const [c] = findCandidates(notes, transcript, T0 + 18 * 60_000, new Set());
-    expect(c).toMatchObject({ kind: 'time_running_out' });
-    expect(c!.suggestion).toContain("haven't covered Owners");
-  });
-});
-
-describe('answering questions asked in the room', () => {
-  it.each([
-    ['What did we decide about the database?', true],
-    ['does anyone know the retention period', true],
-    ['how long is the migration going to take?', true],
-    ['ok', false],
-    ['I think PostgreSQL is better.', false],
-  ])('looksLikeQuestion(%j) → %s', (t, q) => expect(looksLikeQuestion(t)).toBe(q));
-
-  it('leaves questions aimed at a colleague alone', () => {
-    const names = ['Ravi Kumar', 'Asha'];
-    expect(addressedToPerson('Ravi, can you send the spec?', names)).toBe(true);
-    expect(addressedToPerson('what do you think, Asha?', names)).toBe(true);
-    expect(addressedToPerson('What is the deadline?', names)).toBe(false);
   });
 });
 

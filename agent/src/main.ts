@@ -25,19 +25,20 @@ import {
   type RemoteTrack,
   type RemoteTrackPublication,
 } from '@livekit/rtc-node';
-import { isAddressedToAgent, mentionsAgent, proactivityCommand } from './addressing.js';
 import { geminiStructured, parseModels } from './gemini.js';
 import { ThinkingLevel } from '@google/genai';
-import { InterventionController } from './intervene/controller.js';
-import { geminiJudge } from './intervene/judge.js';
+import { Moderator } from './intervene/moderator.js';
+import { geminiBrain } from './brain.js';
+import { geminiRouter } from './router.js';
+import { loadBehaviour, wakeMatcher, type Behaviour } from './behaviour.js';
+import { loadLearning, recordReaction, type IntentStats } from './learning.js';
 import { AGENT_DISPLAY_NAME, config } from './config.js';
 import { languageName, voiceLanguage } from './language.js';
 import { ParticipantListener } from './listener.js';
-import { GREETING, chatReplyInstruction, meetingInstructions, replyInstruction, type MeetingInfo } from './prompts.js';
+import { chatReplyInstruction, meetingInstructions, replyInstruction, type MeetingInfo } from './prompts.js';
 import { MeetingTranscript, TranscriptSink } from './transcript.js';
 import { SharedDeviceVoices } from './voices.js';
 import { emptyPrep, loadPrep, renderPrep, type MeetingPrep } from './prep.js';
-import { addressedToPerson, looksLikeQuestion, shouldAnswerQuestion } from './intervene/question.js';
 import { connectMongo } from './db.js';
 import { earlierSessionsBrief, historySearcher } from './memory.js';
 import { FOLLOW_UP_ITEM, loadContinuity, renderCarryover, type Continuity } from './carryover.js';
@@ -55,8 +56,6 @@ const INSIGHTS_TOPIC = 'aumeet.insights';
 /** Live captions of what people say (the AI's own speech goes out on lk.transcription). */
 const CAPTIONS_TOPIC = 'aumeet.captions';
 const CAPTION_THROTTLE_MS = 250;
-/** "Answer questions in the room" mode: at most one unprompted answer this often. */
-const QUESTION_COOLDOWN_MS = 20_000;
 /** Participant attribute: 'off' = this person opted out of transcription (set in the lobby or the room). */
 const TRANSCRIBE_ATTR = 'aumeet.transcribe';
 /** Participant attribute: '1' = several people speak through this device (enables speaker separation). */
@@ -115,24 +114,20 @@ export default defineAgent<ProcData>({
     const structured = geminiStructured({ apiKey: cfg.GOOGLE_API_KEY, models, thinking: cfg.GEMINI_THINKING });
 
     // ---------- models ----------
-    const sttEngine = new deepgram.STT({
-      apiKey: cfg.DEEPGRAM_API_KEY,
-      model: 'nova-3',
-      language: 'multi', // automatic language detection, incl. switching mid-meeting
-      smartFormat: true,
-      punctuate: true,
-      keyterm: ['AuMeet'],
-    });
-    // Same, plus speaker diarization – only for devices marked as shared by several people.
-    const sttShared = new deepgram.STT({
-      apiKey: cfg.DEEPGRAM_API_KEY,
-      model: 'nova-3',
-      language: 'multi',
-      smartFormat: true,
-      punctuate: true,
-      keyterm: ['AuMeet'],
-      diarize: true,
-    });
+    // Speech-to-text gets the AI's configured name as a key term (set once the behaviour is loaded).
+    const makeStt = (keyterm: string[], diarize: boolean) =>
+      new deepgram.STT({
+        apiKey: cfg.DEEPGRAM_API_KEY,
+        model: 'nova-3',
+        language: 'multi', // automatic language detection, incl. switching mid-meeting
+        smartFormat: true,
+        punctuate: true,
+        keyterm,
+        // Speaker separation only for devices marked as shared by several people.
+        ...(diarize ? { diarize: true } : {}),
+      });
+    let sttEngine = makeStt([], false);
+    let sttShared = makeStt([], true);
     const voices = new SharedDeviceVoices();
     // Voice replies: same fast models, with automatic fallback when one is overloaded or slow.
     const voiceLlm = (model: string) =>
@@ -164,6 +159,32 @@ export default defineAgent<ProcData>({
         logger.warn({ err }, 'MongoDB unavailable – transcript and insights will not be saved');
       }
     }
+    // ---------- behaviour (stored settings, not code) ----------
+    let behaviour: Behaviour | null = null;
+    let hostId: string | null = null;
+    let learning: IntentStats[] = [];
+    let isWake: (text: string) => boolean = () => false;
+    const applyBehaviour = (b: Behaviour | null) => {
+      behaviour = b;
+      isWake = b ? wakeMatcher(b) : () => false;
+      const terms = b ? [b.name, ...b.wakeWords.filter((w) => /^[\p{Script=Latin}\s'-]+$/u.test(w))].slice(0, 20) : [];
+      sttEngine = makeStt(terms, false);
+      sttShared = makeStt(terms, true);
+    };
+    const reloadBehaviour = async () => {
+      if (!mongo) return;
+      try {
+        const r = await loadBehaviour(mongo.db, info.meetingCode);
+        hostId = r.hostId;
+        applyBehaviour(r.behaviour);
+        if (!r.behaviour) logger.error('no valid AI behaviour profile (ai_profiles/default) – the AI will only listen');
+        if (hostId && r.behaviour?.learnFromReactions) learning = await loadLearning(mongo.db, hostId);
+      } catch (err) {
+        logger.warn({ err }, 'could not load AI behaviour');
+      }
+    };
+    await reloadBehaviour();
+
     const transcript = new MeetingTranscript(info.meetingCode, ctx.job.id, mongo ? new TranscriptSink(mongo.db) : null);
     const store = mongo ? new InsightsStore(mongo.db, info.meetingCode, ctx.job.id, info.title) : null;
 
@@ -239,8 +260,19 @@ export default defineAgent<ProcData>({
         },
       });
     }
+    tools['set_speaking_mode'] = llm.tool({
+      description:
+        'Switch whether you speak up on your own. Use when someone asks you to stay quiet / stop interrupting ("quiet"), ' +
+        'or to speak up / jump in again ("active"). In quiet mode you only answer when asked.',
+      parameters: z.object({ mode: z.enum(['quiet', 'active']) }),
+      execute: async ({ mode }) => {
+        moderator.setQuiet(mode === 'quiet');
+        logger.info({ mode }, 'speaking mode changed by a participant');
+        return mode === 'quiet' ? 'Now quiet: answering only when asked.' : 'Speaking up again when it helps.';
+      },
+    });
     const composeBase = () =>
-      [meetingInstructions(info), renderPrep(prep), renderCarryover(continuity.carryover), earlier].filter(Boolean).join('\n\n');
+      [meetingInstructions(info, behaviour), renderPrep(prep), renderCarryover(continuity.carryover), earlier].filter(Boolean).join('\n\n');
     let baseInstructions = composeBase();
     let latestNotes = '';
     const refreshInstructions = () =>
@@ -264,9 +296,16 @@ export default defineAgent<ProcData>({
       analyze: geminiAnalyzer(structured),
       people: () => [...people.values()],
       prep: () => ({ goal: prep.goal, agenda: trackedAgenda(), pastDecisions: continuity.pastDecisions }),
+      ...(behaviour
+        ? {
+            batchSize: (behaviour as Behaviour).engine.analysisBatchLines,
+            idleMs: (behaviour as Behaviour).engine.analysisIdleSeconds * 1000,
+            minIntervalMs: (behaviour as Behaviour).engine.analysisMinIntervalSeconds * 1000,
+          }
+        : {}),
       onUpdate: (insights) => {
         void sendInsights(insights);
-        intervention.notesUpdated();
+        moderator.notesUpdated();
         store?.save(insights, [...people.values()]).catch((err) => logger.warn({ err }, 'could not save insights'));
         // The voice assistant answers "what did we decide?" from the same notes everyone sees.
         latestNotes = renderNotes(insights);
@@ -290,43 +329,52 @@ export default defineAgent<ProcData>({
     // ---------- adaptive intervention ----------
     let lastLanguage = 'en';
     const agentIdle = () => session.agentState === 'listening' || session.agentState === 'idle';
-    const intervention = new InterventionController({
+    const presentNames = () => [...ctx.room.remoteParticipants.values()].filter(isHuman).map(nameOf);
+    const moderator = new Moderator({
       enabled: info.proactive,
+      title: info.title,
+      brain: geminiBrain(structured),
+      behaviour: () => behaviour,
       facilitator: () => prep.facilitator,
-      judge: geminiJudge(structured),
+      prep: () => renderPrep(prep),
+      learning: () => learning,
       insights: () => analyzer.insights,
       transcript: () => transcript.all,
+      present: presentNames,
       agentIdle,
-      speak: (message, candidate) => {
-        logger.info({ kind: candidate.kind, key: candidate.key }, 'speaking up proactively');
+      speak: (message, d) => {
+        logger.info({ intent: d.intent, key: d.topicKey, reason: d.reason }, 'speaking up');
         voiceOut.updateOptions({ language: voiceLanguage(lastLanguage) });
-        if (candidate.longForm) {
-          // Opening / wrap-up: composed from the live notes in the assistant's instructions.
-          session.generateReply({
-            instructions: `${candidate.goal} Speak in ${languageName(lastLanguage)}. Nobody asked you – keep it natural and brief.`,
-            allowInterruptions: true,
-          });
-        } else {
-          session.say(message, { allowInterruptions: true });
-        }
+        session.say(message, { allowInterruptions: true });
+      },
+      onReaction: (r) => {
+        logger.info({ intent: r.intent, reaction: r.reaction }, 'reaction to a remark');
+        if (!mongo || !hostId || r.reaction === 'pending') return;
+        void recordReaction(mongo.db, {
+          hostId, meetingCode: info.meetingCode, sessionId: ctx.job.id, intent: r.intent, reaction: r.reaction, message: r.message, at: new Date(r.at),
+        }).catch((err) => logger.warn({ err }, 'could not save reaction'));
       },
       log: (msg, data) => logger.debug(data ?? {}, msg),
     });
+    const route = geminiRouter(structured);
     const session = new voice.AgentSession({ llm: brain, tts: voiceOut, vad: null, turnDetection: 'manual' });
 
     let lastAgentReplyAt: number | null = null;
     let lastAddressedBy: string | null = null;
+    let lastAddressedName: string | null = null;
+    let lastAgentText = '';
 
     session.on(voice.AgentSessionEventTypes.AgentStateChanged, (ev) => {
       if (ev.oldState === 'speaking' && ev.newState !== 'speaking') {
         lastAgentReplyAt = Date.now();
-        intervention.agentFinishedSpeaking();
+        moderator.agentFinishedSpeaking();
       }
     });
     // Record what the AI actually said (interrupted replies are truncated to what was spoken).
     session.on(voice.AgentSessionEventTypes.ConversationItemAdded, (ev) => {
       const item = ev.item;
       if (item.type === 'message' && item.role === 'assistant' && item.textContent) {
+        lastAgentText = item.textContent;
         transcript.add({
           speakerId: ctx.room.localParticipant?.identity ?? 'agent',
           speakerName: AGENT_DISPLAY_NAME,
@@ -356,7 +404,7 @@ export default defineAgent<ProcData>({
 
     // ---------- reacting to speech ----------
     const onSpeechStart = (p: RemoteParticipant) => {
-      intervention.humanSpeechStarted(p.identity);
+      moderator.humanSpeechStarted(p.identity);
       // Full duplex: anyone starting to talk stops the AI immediately.
       if (session.agentState === 'speaking' || session.agentState === 'thinking') {
         logger.debug({ who: p.identity }, 'interrupted by participant');
@@ -386,62 +434,41 @@ export default defineAgent<ProcData>({
       });
       await appendToContext('user', `${who}: ${text}`);
       analyzer.notify();
+      moderator.lineAdded();
       if (language) lastLanguage = language;
+      const line = transcript.all[transcript.all.length - 1]!;
 
-      // "AuMeet, stay quiet" / "AuMeet, you can speak up again"
-      const command = proactivityCommand(text);
-      if (command) {
-        intervention.setQuiet(command === 'quiet');
-        voiceOut.updateOptions({ language: voiceLanguage(language) });
-        session.generateReply({
-          instructions:
-            command === 'quiet'
-              ? `${who} asked you to stop speaking up on your own. Briefly acknowledge in ${languageName(language)} that you'll only speak when someone asks you.`
-              : `${who} said you may speak up again. Briefly acknowledge in ${languageName(language)} that you'll speak up when something needs attention.`,
-          allowInterruptions: true,
-        });
-        return;
-      }
-
-      const { addressed, reason } = isAddressedToAgent(text, speakerKey, now, { lastAgentReplyAt, lastAddressedBy });
-      if (!addressed || !reason) {
-        if (prep.replyMode === 'any') void maybeAnswerQuestion(who, speakerKey, text, language);
-        return;
-      }
-
-      lastAddressedBy = speakerKey;
-      voiceOut.updateOptions({ language: voiceLanguage(language) });
-      session.generateReply({
-        instructions: replyInstruction(who, languageName(language), reason),
-        allowInterruptions: true,
-      });
-    };
-
-    // Host chose "answer questions in the room": answer unaddressed questions when it clearly helps.
-    let lastQuestionAnswerAt = 0;
-    const maybeAnswerQuestion = async (who: string, speakerKey: string, text: string, language: string) => {
-      if (!looksLikeQuestion(text) || addressedToPerson(text, [...people.values()].map((x) => x.name))) return;
-      if (Date.now() - lastQuestionAnswerAt < QUESTION_COOLDOWN_MS || !agentIdle()) return;
-      try {
-        const verdict = await shouldAnswerQuestion(structured, {
-          question: text,
-          speaker: who,
-          recent: transcript.all.slice(-25),
-          insights: analyzer.insights,
-          prepSummary: renderPrep(prep),
-        });
-        logger.debug({ answer: verdict.answer, reason: verdict.reason }, 'room question verdict');
-        // Someone may have answered meanwhile; only speak into a pause.
-        if (!verdict.answer || !agentIdle()) return;
-        lastQuestionAnswerAt = Date.now();
+      const answer = (why: string) => {
         lastAddressedBy = speakerKey;
+        lastAddressedName = who;
         voiceOut.updateOptions({ language: voiceLanguage(language) });
-        session.generateReply({
-          instructions: `${who} asked the room: "${text}". Nobody addressed you, but the host lets you answer such questions. Answer briefly in ${languageName(language)}.`,
-          allowInterruptions: true,
+        session.generateReply({ instructions: replyInstruction(who, languageName(language), why), allowInterruptions: true });
+      };
+
+      // Fast path: the configured name (or one of its spellings) was said.
+      if (isWake(text)) return answer('they addressed you by name');
+      if (!behaviour) return;
+
+      // Otherwise the model judges from context: follow-up, misheard name, question to the room.
+      try {
+        const d = await route({
+          line,
+          recent: transcript.all.slice(-12),
+          behaviour,
+          answerRoomQuestions: prep.replyMode === 'any',
+          lastAnswer:
+            lastAgentReplyAt !== null && lastAddressedName
+              ? { to: lastAddressedName, text: lastAgentText, secondsAgo: Math.round((Date.now() - lastAgentReplyAt) / 1000) }
+              : null,
+          participants: [...people.values()].map((x) => x.name),
         });
+        logger.debug({ respond: d.respond, kind: d.kind, reason: d.reason }, 'route');
+        // Only if nobody has said anything since and the AI is free – otherwise the moment has passed.
+        const latest = transcript.all.filter((u) => !u.isAgent).at(-1);
+        if (!d.respond || latest?.id !== line.id || !agentIdle()) return;
+        answer(d.kind === 'follow_up' ? 'following up on your last answer' : d.kind === 'room_question' ? 'they asked the room a question you can answer' : 'they are talking to you');
       } catch (err) {
-        logger.debug({ err }, 'room question check failed');
+        logger.debug({ err }, 'routing failed');
       }
     };
 
@@ -463,7 +490,7 @@ export default defineAgent<ProcData>({
       remember(p);
       await appendToContext('user', `${nameOf(p)} (in chat): ${text}`);
       analyzer.notify();
-      if (mentionsAgent(text) || /^@ai\b/i.test(text)) await replyInChat(nameOf(p));
+      if (isWake(text) || /^@ai\b/i.test(text)) await replyInChat(nameOf(p));
     });
 
     const replyInChat = async (speaker: string) => {
@@ -503,8 +530,8 @@ export default defineAgent<ProcData>({
       if (greeted || !humansPresent()) return;
       greeted = true;
       if (analyzer.insights.carryover) void sendInsights(analyzer.insights);
-      // In facilitator mode the opening (goal, agenda, follow-ups) replaces the generic greeting.
-      if (!prep.facilitator) session.say(GREETING, { allowInterruptions: true });
+      // Whether and how to introduce itself (or open the meeting as facilitator) is the brain's call.
+      moderator.start();
     };
 
     // ---------- live captions ----------
@@ -542,7 +569,7 @@ export default defineAgent<ProcData>({
         p.identity,
         new ParticipantListener(p, track, isSharedDevice(p) ? sttShared : sttEngine, ctx.proc.userData.vad, {
           onSpeechStart: () => onSpeechStart(p),
-          onSpeechEnd: () => intervention.humanSpeechEnded(p.identity),
+          onSpeechEnd: () => moderator.humanSpeechEnded(p.identity),
           onPartial: (text) => sendCaption(p, text, false),
           onUtterance: (text, lang, voice) => {
             sendCaption(p, text, true);
@@ -584,6 +611,7 @@ export default defineAgent<ProcData>({
               const followUpChanged = p.followUpOf !== prep.followUpOf;
               prep = { ...p, replyMode: prep.replyMode };
               if (followUpChanged) await loadMemory();
+              await reloadBehaviour();
               seedNotes();
               void sendInsights(analyzer.insights);
               baseInstructions = composeBase();
@@ -592,8 +620,8 @@ export default defineAgent<ProcData>({
             })
             .catch((err) => logger.warn({ err }, 'could not reload meeting preparation'));
         }
-        if (typeof s.aiProactive === 'boolean' && s.aiProactive !== intervention.isEnabled) {
-          intervention.setEnabled(s.aiProactive);
+        if (typeof s.aiProactive === 'boolean' && s.aiProactive !== moderator.isEnabled) {
+          moderator.setEnabled(s.aiProactive);
           logger.info({ proactive: s.aiProactive }, 'proactive mode changed by host');
         }
       } catch {
@@ -629,7 +657,7 @@ export default defineAgent<ProcData>({
       })
       .on(RoomEvent.ParticipantDisconnected, (p) => {
         stopListening(p.identity);
-        intervention.participantLeft(p.identity);
+        moderator.participantLeft(p.identity);
         if (!humansPresent() && !emptyTimer) {
           emptyTimer = setTimeout(() => {
             if (!humansPresent()) ctx.shutdown('everyone left');
@@ -637,11 +665,11 @@ export default defineAgent<ProcData>({
         }
       });
 
-    const tickTimer = setInterval(() => intervention.tick(), 5_000);
+    const tickTimer = setInterval(() => moderator.tick(), 2_000);
     ctx.addShutdownCallback(async () => {
       clearInterval(tickTimer);
       if (emptyTimer) clearTimeout(emptyTimer);
-      intervention.stop();
+      moderator.stop();
       for (const l of listeners.values()) l.close();
       listeners.clear();
       // Final notes + summary for the dashboard.
@@ -672,7 +700,7 @@ export default defineAgent<ProcData>({
       }
     }
     greetOnce();
-    logger.info({ meeting: info.meetingCode }, 'AuMeet AI joined');
+    logger.info({ meeting: info.meetingCode }, 'AI joined');
   },
 });
 

@@ -40,5 +40,5 @@ export function config(): Config {
   return cached;
 }
 
-/** Display name of the AI participant in the meeting. */
-export const AGENT_DISPLAY_NAME = 'AuMeet AI';
+/** Display name of the AI participant tile and transcript lines (deployment setting, AGENT_DISPLAY_NAME). */
+export const AGENT_DISPLAY_NAME = process.env['AGENT_DISPLAY_NAME']?.trim() || 'AuMeet AI';

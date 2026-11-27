@@ -1,8 +1,10 @@
-import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, OnInit, computed, inject, signal } from '@angular/core';
 import { FormControl, ReactiveFormsModule, Validators } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { AuthService, apiErrorMessage } from '../../core/auth.service';
 import { Icon } from '../../shared/icon';
+import { AiService, behaviourDiff, type Behaviour, type LearningStat } from '../../core/ai.service';
+import { BehaviourEditor } from '../../shared/behaviour-editor';
 import { Modal } from '../../shared/modal';
 import { ToastService } from '../../shared/toast';
 import { UserMenu } from '../../shared/user-menu';
@@ -10,7 +12,7 @@ import { UserMenu } from '../../shared/user-menu';
 @Component({
   selector: 'app-account-page',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [ReactiveFormsModule, RouterLink, Icon, Modal, UserMenu],
+  imports: [ReactiveFormsModule, RouterLink, Icon, Modal, UserMenu, BehaviourEditor],
   template: `
     <header class="topbar">
       <a routerLink="/"><img src="aumeet-logo.png" alt="AuMeet" class="wordmark" /></a>
@@ -44,6 +46,36 @@ import { UserMenu } from '../../shared/user-menu';
               </button>
             </div>
           </form>
+        </section>
+
+        <!-- AI behaviour -->
+        <section class="card">
+          <h2>AI participant</h2>
+          <p class="hint">Your default for meetings you host. You can still adjust a single meeting from its menu.</p>
+          @if (aiDraft(); as d) {
+            <app-behaviour-editor [value]="d" (changed)="aiDraft.set($event)" />
+            <div class="actions gap">
+              <button class="btn btn-outline" type="button" [disabled]="busy() === 'ai' || !aiCustomised()" (click)="resetAi()">Use the standard settings</button>
+              <button class="btn btn-primary" type="button" [disabled]="busy() === 'ai' || !aiDirty()" (click)="saveAi()">
+                @if (busy() === 'ai') { <span class="spinner"></span> } Save
+              </button>
+            </div>
+          } @else {
+            <p class="hint">Loading…</p>
+          }
+
+          <h3 class="sub-h">What it learned from your meetings</h3>
+          @if (learning().length === 0) {
+            <p class="hint">Nothing yet. After meetings it notices which of its remarks people took up and which they ignored.</p>
+          } @else {
+            <ul class="learned">
+              @for (s of learning(); track s.intent) {
+                <li><span class="intent">{{ intentLabel(s.intent) }}</span>
+                  <span class="stat">{{ s.engaged }} taken up · {{ s.ignored }} ignored · {{ s.rejected }} pushed back</span></li>
+              }
+            </ul>
+            <div class="actions"><button class="btn btn-outline" type="button" [disabled]="busy() === 'ai'" (click)="forget()">Forget what it learned</button></div>
+          }
         </section>
 
         <!-- Password -->
@@ -138,6 +170,12 @@ import { UserMenu } from '../../shared/user-menu';
     .input:disabled { color: var(--text-muted); }
     .hint { margin: -6px 0 18px; color: var(--text-muted); font-size: 14px; line-height: 1.5; }
     .actions { display: flex; justify-content: flex-end; }
+    .actions.gap { gap: 12px; flex-wrap: wrap; margin-top: 8px; }
+    .sub-h { margin: 28px 0 10px; font-size: 15px; font-weight: 600; }
+    .learned { list-style: none; margin: 0 0 14px; padding: 0;
+      li { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid #222; font-size: 14px; flex-wrap: wrap; } }
+    .intent { font-weight: 500; }
+    .stat { color: var(--text-muted); }
     .actions .btn { width: auto; min-width: 150px; height: 44px; font-size: 15px; }
     .dlg-text { margin: 0 0 16px; color: var(--text-muted); line-height: 1.55; strong { color: var(--text); } }
     .dlg-actions { display: flex; justify-content: flex-end; gap: 12px; margin-top: 12px;
@@ -145,11 +183,79 @@ import { UserMenu } from '../../shared/user-menu';
     @media (max-width: 520px) { .card { padding: 20px; } .topbar { padding: 10px 16px; } }
   `,
 })
-export class AccountPage {
+export class AccountPage implements OnInit {
   protected readonly auth = inject(AuthService);
   private readonly toast = inject(ToastService);
+  private readonly ai = inject(AiService);
 
-  protected readonly busy = signal<'name' | 'pw' | 'del' | null>(null);
+  protected readonly busy = signal<'name' | 'pw' | 'del' | 'ai' | null>(null);
+  private readonly aiDefaults = signal<Behaviour | null>(null);
+  private readonly aiSaved = signal<Behaviour | null>(null);
+  protected readonly aiDraft = signal<Behaviour | null>(null);
+  protected readonly learning = signal<LearningStat[]>([]);
+  protected readonly aiDirty = computed(() => JSON.stringify(this.aiDraft()) !== JSON.stringify(this.aiSaved()));
+  protected readonly aiCustomised = computed(() => {
+    const d = this.aiDraft();
+    const base = this.aiDefaults();
+    return !!d && !!base && Object.keys(behaviourDiff(d, base)).length > 0;
+  });
+
+  ngOnInit(): void {
+    void this.ai.account().then((r) => this.applyAi(r), () => this.toast.error('Could not load the AI settings.'));
+    void this.ai.learning().then((r) => this.learning.set(r.stats), () => {});
+  }
+
+  private applyAi(r: { defaults: Behaviour; effective: Behaviour }): void {
+    this.aiDefaults.set(r.defaults);
+    this.aiSaved.set(r.effective);
+    this.aiDraft.set(r.effective);
+  }
+
+  protected async saveAi(): Promise<void> {
+    const d = this.aiDraft();
+    const base = this.aiDefaults();
+    if (!d || !base) return;
+    this.busy.set('ai');
+    try {
+      const diff = behaviourDiff(d, base);
+      this.applyAi(await this.ai.saveAccount(Object.keys(diff).length ? diff : null));
+      this.toast.show('AI settings saved');
+    } catch (err) {
+      this.toast.error(apiErrorMessage(err, 'Could not save the AI settings.'));
+    } finally {
+      this.busy.set(null);
+    }
+  }
+
+  protected async resetAi(): Promise<void> {
+    this.busy.set('ai');
+    try {
+      this.applyAi(await this.ai.saveAccount(null));
+      this.toast.show('Back to the standard AI settings');
+    } catch (err) {
+      this.toast.error(apiErrorMessage(err));
+    } finally {
+      this.busy.set(null);
+    }
+  }
+
+  protected async forget(): Promise<void> {
+    this.busy.set('ai');
+    try {
+      await this.ai.resetLearning();
+      this.learning.set([]);
+      this.toast.show('The AI forgot what it learned');
+    } catch (err) {
+      this.toast.error(apiErrorMessage(err));
+    } finally {
+      this.busy.set(null);
+    }
+  }
+
+  protected intentLabel(intent: string): string {
+    const t = intent.replace(/[_-]+/g, ' ').trim();
+    return t ? t[0]!.toUpperCase() + t.slice(1) : 'Other';
+  }
   protected readonly pwError = signal<string | null>(null);
   protected readonly delError = signal<string | null>(null);
   protected readonly deleting = signal(false);

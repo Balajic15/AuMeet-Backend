@@ -1,48 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { FOLLOW_UP_WINDOW_MS, isAddressedToAgent, mentionsAgent } from '../src/addressing.js';
 import { baseLanguage, voiceLanguage } from '../src/language.js';
 import { MeetingTranscript } from '../src/transcript.js';
-
-describe('mentionsAgent', () => {
-  it.each([
-    'AuMeet, what did we decide?',
-    'hey aumeet can you summarise',
-    'Au-Meet are you there',
-    'oh meet what was the deadline', // common mis-transcription
-    'All meet, remind us',
-    'औमीट, क्या तय हुआ?',
-  ])('recognises "%s"', (t) => expect(mentionsAgent(t)).toBe(true));
-
-  it.each(['Let us meet on Friday', 'we should meet the client', 'Priya, can you take this?'])(
-    'ignores "%s"',
-    (t) => expect(mentionsAgent(t)).toBe(false),
-  );
-});
-
-describe('isAddressedToAgent', () => {
-  const now = 1_000_000;
-  const justAnswered = { lastAgentReplyAt: now - 3000, lastAddressedBy: 'user:alice' };
-
-  it('answers when named', () => {
-    expect(isAddressedToAgent('AuMeet what is open?', 'user:bob', now, { lastAgentReplyAt: null, lastAddressedBy: null }))
-      .toEqual({ addressed: true, reason: 'name' });
-  });
-
-  it('treats a quick question from the same person as a follow-up', () => {
-    expect(isAddressedToAgent('And who owns that task?', 'user:alice', now, justAnswered).reason).toBe('follow-up');
-  });
-
-  it('does not treat acknowledgements, other speakers, or late questions as follow-ups', () => {
-    expect(isAddressedToAgent('okay thanks', 'user:alice', now, justAnswered).addressed).toBe(false);
-    expect(isAddressedToAgent('What do you think, Bob?', 'user:carol', now, justAnswered).addressed).toBe(false);
-    const late = { ...justAnswered, lastAgentReplyAt: now - FOLLOW_UP_WINDOW_MS - 1 };
-    expect(isAddressedToAgent('And who owns that task?', 'user:alice', now, late).addressed).toBe(false);
-  });
-
-  it('ignores ordinary discussion', () => {
-    expect(isAddressedToAgent("Let's use MongoDB.", 'user:a', now, justAnswered).addressed).toBe(false);
-  });
-});
 
 describe('language', () => {
   it('normalises codes and falls back to English for the voice', () => {
