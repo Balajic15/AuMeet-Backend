@@ -11,6 +11,8 @@ export interface AnalyzerOptions {
   people: () => Person[];
   onUpdate: (insights: Insights) => void;
   onError?: (err: unknown) => void;
+  /** Host's goal/agenda; read on every run so edits during the meeting apply. */
+  prep?: () => { goal: string; agenda: Array<{ id: string; title: string; minutes: number | null }> };
   /** Run once this many new human lines have arrived. */
   batchSize?: number;
   /** …or after this much quiet with at least one new line. */
@@ -110,6 +112,7 @@ export class MeetingAnalyzer {
     const through = all[all.length - 1]!.id;
     const consumed = this.pending;
     this.lastRunAt = this.now();
+    const prep = this.opts.prep?.();
 
     try {
       const out = await this.opts.analyze(
@@ -121,6 +124,9 @@ export class MeetingAnalyzer {
           current: this.state,
           lines,
           final,
+          goal: prep?.goal,
+          agenda: prep?.agenda,
+          elapsedMinutes: Math.round((this.now() - all[0]!.at) / 60_000),
         }),
       );
       this.state = normalize(this.state, out, {
@@ -128,6 +134,8 @@ export class MeetingAnalyzer {
         people: this.opts.people(),
         analyzedThrough: through,
         now: new Date(this.now()),
+        goal: prep?.goal,
+        agendaPlan: prep?.agenda,
       });
       this.pending = Math.max(0, this.pending - consumed);
       this.opts.onUpdate(this.state);

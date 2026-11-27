@@ -13,7 +13,35 @@ export interface MeetingSettings {
   locked: boolean;
   /** People wait in the lobby until the host admits them. */
   waitingRoom: boolean;
+  /** 'named' = AI answers when called by name; 'any' = also answers questions asked to the room. */
+  aiReplyMode: 'named' | 'any';
 }
+
+export interface AgendaItem {
+  id: string;
+  title: string;
+  minutes: number | null;
+}
+
+export interface MeetingPrep {
+  goal: string;
+  agenda: AgendaItem[];
+}
+
+export interface MeetingDocumentInfo {
+  id: string;
+  filename: string;
+  mimeType: string;
+  sizeBytes: number;
+  pages: number | null;
+  chars: number;
+  truncated: boolean;
+  indexed: boolean;
+  createdAt: string | null;
+}
+
+export const ACCEPTED_DOCUMENTS = '.pdf,.docx,.pptx,.txt,.md,.csv';
+export const MAX_DOCUMENT_MB = 10;
 
 export interface Meeting {
   id: string;
@@ -22,6 +50,7 @@ export interface Meeting {
   hostId: string;
   status: MeetingStatus;
   settings: MeetingSettings;
+  prep: MeetingPrep;
   scheduledFor: string | null;
   startedAt: string | null;
   endedAt: string | null;
@@ -33,6 +62,8 @@ export interface LobbyMeeting extends Meeting {
   isHost: boolean;
   /** The server has recording storage configured. */
   recordingAvailable?: boolean;
+  /** Number of documents prepared for the AI. */
+  documents?: number;
 }
 
 export interface RecordingInfo {
@@ -71,13 +102,20 @@ export interface PendingJoin {
   createdAt: string;
 }
 
+export interface PrepInput {
+  goal?: string;
+  agenda?: Array<{ id?: string; title: string; minutes?: number | null }>;
+}
+
 export interface CreateMeetingInput {
+  prep?: PrepInput;
   title?: string;
   scheduledFor?: string;
   settings?: Partial<MeetingSettings>;
 }
 
 export interface UpdateMeetingInput {
+  prep?: PrepInput;
   title?: string;
   scheduledFor?: string | null;
   settings?: Partial<MeetingSettings>;
@@ -127,6 +165,22 @@ export class MeetingsService {
     return firstValueFrom(
       this.http.get<JoinRequestStatus>(`/api/meetings/${code}/join-requests/${requestId}`, { params: { secret } }),
     );
+  }
+
+  async documents(code: string): Promise<MeetingDocumentInfo[]> {
+    return (await firstValueFrom(this.http.get<{ documents: MeetingDocumentInfo[] }>(`/api/meetings/${code}/documents`))).documents;
+  }
+
+  /** Host only. The server extracts the text for the AI and discards the file. */
+  async uploadDocument(code: string, file: File): Promise<MeetingDocumentInfo> {
+    const form = new FormData();
+    form.append('file', file, file.name);
+    return (await firstValueFrom(this.http.post<{ document: MeetingDocumentInfo }>(`/api/meetings/${code}/documents`, form))).document;
+  }
+
+  /** Host only. */
+  deleteDocument(code: string, id: string): Promise<unknown> {
+    return firstValueFrom(this.http.delete(`/api/meetings/${code}/documents/${id}`));
   }
 
   /** Ask the server to bring the AI in if it isn't in the meeting yet (safe to repeat). */

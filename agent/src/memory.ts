@@ -60,7 +60,14 @@ export interface HistoryHit {
   text: string;
 }
 
-export function historySearcher(db: Db, opts: { apiKey: string; model: string; dims: number; meetingCode: string }) {
+/**
+ * Semantic search over this meeting link's memory: `history` = earlier sessions (recaps, decisions,
+ * tasks, transcript), `documents` = files the host attached for the meeting.
+ */
+export function historySearcher(
+  db: Db,
+  opts: { apiKey: string; model: string; dims: number; meetingCode: string; source?: 'history' | 'documents' },
+) {
   const ai = new GoogleGenAI({ apiKey: opts.apiKey });
   const col = db.collection('memory_chunks');
 
@@ -75,7 +82,7 @@ export function historySearcher(db: Db, opts: { apiKey: string; model: string; d
     const q = raw.map((x) => x / len);
 
     const chunks = await col
-      .find({ meetingCode: opts.meetingCode })
+      .find({ meetingCode: opts.meetingCode, kind: opts.source === 'documents' ? 'document' : { $ne: 'document' } })
       .sort({ startedAt: -1 })
       .limit(2000)
       .project({ kind: 1, text: 1, startedAt: 1, embedding: 1 })

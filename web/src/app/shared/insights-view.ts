@@ -22,6 +22,31 @@ const STATUS_ORDER: DecisionStatus[] = ['disputed', 'proposed', 'agreed', 'rejec
   imports: [Icon],
   template: `
     @let i = insights();
+    @if (i.goal; as g) {
+      <section class="block goal" [class]="'block goal g-' + g.status">
+        <h3>Goal</h3>
+        <p class="goal-text">{{ g.text }}</p>
+        <p class="goal-status"><span class="dot"></span> {{ goalLabel(g.status) }}@if (g.reason) { – {{ g.reason }} }</p>
+      </section>
+    }
+    @if (i.agenda?.length) {
+      <section class="block">
+        <h3>Agenda <span class="n">{{ doneCount(i) }}/{{ i.agenda!.length }}</span></h3>
+        <ol class="agenda">
+          @for (a of i.agenda; track a.id) {
+            <li [class]="'a-' + a.status">
+              <span class="a-mark" [attr.aria-label]="agendaLabel(a.status)">{{ agendaMark(a.status) }}</span>
+              <div class="a-body">
+                <div class="a-title">{{ a.title }}</div>
+                <div class="a-meta">
+                  {{ agendaLabel(a.status) }}@if (a.minutes) { · {{ used(a) }}{{ a.minutes }} min }@if (a.note) { · {{ a.note }} }
+                </div>
+              </div>
+            </li>
+          }
+        </ol>
+      </section>
+    }
     @if (i.summary) {
       <section class="block">
         <h3>Summary</h3>
@@ -152,6 +177,24 @@ const STATUS_ORDER: DecisionStatus[] = ['disputed', 'proposed', 'agreed', 'rejec
     }
     .n { padding: 0 7px; border-radius: 99px; background: #2a2a2a; color: var(--text); font-size: 11.5px; letter-spacing: 0; }
     .summary { margin: 0; line-height: 1.6; font-size: 15px; }
+    .goal { padding: 12px 14px; background: var(--surface-sunken); border-left: 3px solid #555; }
+    .goal.g-on_track, .goal.g-achieved { border-left-color: var(--brand); }
+    .goal.g-drifting { border-left-color: #ffb020; }
+    .goal.g-off_track { border-left-color: var(--danger); }
+    .goal-text { margin: 0; font-size: 15px; font-weight: 500; line-height: 1.45; }
+    .goal-status { display: flex; align-items: center; gap: 6px; margin: 8px 0 0; color: var(--text-muted); font-size: 13px; }
+    .goal-status .dot { width: 8px; height: 8px; border-radius: 50%; background: #777; flex: none; }
+    .g-on_track .dot, .g-achieved .dot { background: var(--brand); }
+    .g-drifting .dot { background: #ffb020; }
+    .g-off_track .dot { background: var(--danger); }
+    .agenda { list-style: none; margin: 0; padding: 0; }
+    .agenda li { display: flex; gap: 10px; padding: 8px 0; border-bottom: 1px solid #222; }
+    .a-mark { flex: none; width: 20px; height: 20px; display: grid; place-items: center; border-radius: 50%; border: 1.5px solid #555; font-size: 11px; }
+    .a-in_progress .a-mark { border-color: var(--brand); color: var(--brand); }
+    .a-done .a-mark { background: var(--brand); border-color: var(--brand); color: var(--brand-ink); }
+    .a-skipped .a-title { text-decoration: line-through; color: var(--text-muted); }
+    .a-title { font-size: 14.5px; }
+    .a-meta { margin-top: 2px; color: var(--text-muted); font-size: 12.5px; }
     .none { margin: 0; color: var(--text-placeholder); font-size: 14px; }
 
     .card {
@@ -222,6 +265,29 @@ export class InsightsView {
   );
   protected readonly openQuestions = computed(() => this.insights().openQuestions.filter((q) => q.status === 'open'));
   private readonly bySeq = computed(() => new Map(this.lines().map((l) => [l.seq, l])));
+
+  protected goalLabel(s: string): string {
+    return { on_track: 'On track', drifting: 'Drifting', off_track: 'Off track', achieved: 'Achieved', no_goal: '' }[s] ?? s;
+  }
+
+  protected agendaLabel(s: string): string {
+    return { not_started: 'Not started', in_progress: 'In progress', done: 'Done', skipped: 'Skipped' }[s] ?? s;
+  }
+
+  protected agendaMark(s: string): string {
+    return { not_started: '', in_progress: '•', done: '✓', skipped: '–' }[s] ?? '';
+  }
+
+  protected doneCount(i: Insights): number {
+    return (i.agenda ?? []).filter((a) => a.status === 'done').length;
+  }
+
+  /** "6/10 min" while running or finished. */
+  protected used(a: { startedAt: string | null; doneAt: string | null }): string {
+    if (!a.startedAt) return '';
+    const end = a.doneAt ? Date.parse(a.doneAt) : Date.now();
+    return `${Math.max(0, Math.round((end - Date.parse(a.startedAt)) / 60_000))}/`;
+  }
 
   protected label(s: DecisionStatus): string {
     return STATUS_LABEL[s];

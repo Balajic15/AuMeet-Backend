@@ -176,3 +176,13 @@ describe('account deletion', () => {
     expect((await request(app).get('/api/auth/me').set('Cookie', cookiePair(asha))).status).toBe(401);
   });
 });
+
+describe('test isolation', () => {
+  it('never loads the real .env (no SMTP, Gemini or Redis keys in tests)', async () => {
+    const { env } = await import('../src/config/env.js');
+    expect(env.SMTP_URL).toBeUndefined();
+    expect(env.GOOGLE_API_KEY).toBeUndefined();
+    expect(env.REDIS_URL).toBeUndefined();
+    expect(env.AGENT_NAME).toBe('aumeet');
+  });
+});

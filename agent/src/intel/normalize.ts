@@ -1,4 +1,5 @@
-import type { ActionItem, Decision, Insights, ModelOutput, OpenQuestion, Topic } from './schema.js';
+import type { ActionItem, AgendaProgress, Decision, GoalProgress, Insights, ModelOutput, OpenQuestion, Topic } from './schema.js';
+import type { AgendaPlan } from '../prep.js';
 
 export interface Person {
   identity: string;
@@ -12,6 +13,9 @@ export interface NormalizeContext {
   people: Person[];
   analyzedThrough: number;
   now: Date;
+  /** Host's preparation; progress is only tracked against these. */
+  goal?: string;
+  agendaPlan?: AgendaPlan[];
 }
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -148,7 +152,50 @@ export function normalize(prev: Insights, out: ModelOutput, ctx: NormalizeContex
     decisions,
     actionItems,
     openQuestions,
+    goal: mergeGoal(prev.goal, out, ctx),
+    agenda: mergeAgenda(prev.agenda, out, ctx),
     analyzedThrough: Math.max(prev.analyzedThrough, ctx.analyzedThrough),
     updatedAt: now,
   };
+}
+
+/** Goal progress: keeps `since` while the status is unchanged so "off track for 6 minutes" works. */
+function mergeGoal(prev: GoalProgress | null, out: ModelOutput, ctx: NormalizeContext): GoalProgress | null {
+  const text = (ctx.goal ?? '').trim();
+  if (!text) return null;
+  const now = ctx.now.toISOString();
+  const status = out.progress?.goalStatus && out.progress.goalStatus !== 'no_goal' ? out.progress.goalStatus : prev?.status ?? 'on_track';
+  const reason = clean(out.progress?.goalReason) ?? (status === prev?.status ? prev.reason : '');
+  return {
+    text,
+    status,
+    reason: reason ?? '',
+    since: prev && prev.status === status && prev.text === text ? prev.since : now,
+  };
+}
+
+/** Agenda progress, keyed by the host's agenda ids; unknown ids from the model are ignored. */
+function mergeAgenda(prev: AgendaProgress[], out: ModelOutput, ctx: NormalizeContext): AgendaProgress[] {
+  const plan = ctx.agendaPlan ?? [];
+  const now = ctx.now.toISOString();
+  const before = new Map(prev.map((a) => [a.id, a]));
+  const reported = new Map((out.progress?.agenda ?? []).map((a) => [a.id, a]));
+  return plan.map((item) => {
+    const old = before.get(item.id);
+    const r = reported.get(item.id);
+    let status = r?.status ?? old?.status ?? 'not_started';
+    // Never move a finished item backwards on a noisy run.
+    if ((old?.status === 'done' || old?.status === 'skipped') && status === 'not_started') status = old.status;
+    const startedAt = old?.startedAt ?? (status !== 'not_started' && status !== 'skipped' ? now : null);
+    const doneAt = status === 'done' ? old?.doneAt ?? now : null;
+    return {
+      id: item.id,
+      title: item.title,
+      minutes: item.minutes,
+      status,
+      note: clean(r?.note) ?? old?.note ?? '',
+      startedAt,
+      doneAt,
+    };
+  });
 }

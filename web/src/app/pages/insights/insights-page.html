@@ -92,6 +92,12 @@
         <section class="recap">
           <p class="recap-label">Recap</p>
           <h2>{{ r.headline }}</h2>
+          @if (r.goalOutcome; as go) {
+            <p class="goal-outcome" [class]="'goal-outcome o-' + go.status">
+              <strong>Goal {{ go.status === 'met' ? 'met' : go.status === 'partly_met' ? 'partly met' : 'not met' }}.</strong>
+              {{ go.summary }}
+            </p>
+          }
           <p class="overview">{{ r.overview }}</p>
           <div class="recap-cols">
             @if (r.highlights.length) {

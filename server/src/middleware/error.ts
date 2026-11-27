@@ -19,6 +19,12 @@ export const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
     });
     return;
   }
+  // Upload limits (multer)
+  if (err?.name === 'MulterError') {
+    const tooBig = err.code === 'LIMIT_FILE_SIZE';
+    res.status(tooBig ? 413 : 400).json({ error: tooBig ? 'That file is too large (max 10 MB).' : 'Upload one file at a time.' });
+    return;
+  }
   // Malformed JSON body from express.json()
   if (err?.type === 'entity.parse.failed') {
     res.status(400).json({ error: 'Invalid JSON body' });

@@ -6,6 +6,11 @@ import { UserModel } from '../models/User.js';
 import { MeetingInsightModel, TranscriptLineModel } from '../models/Insights.js';
 import { JoinRequestModel } from '../models/JoinRequest.js';
 import { RecordingModel } from '../models/Recording.js';
+import { MeetingDocumentModel } from '../models/MeetingDocument.js';
+import { MemoryChunkModel } from '../models/MemoryChunk.js';
+import multer from 'multer';
+import { aiConfigured, getAi } from '../ai/gemini.js';
+import { MAX_FILE_BYTES, MAX_FILES_PER_MEETING, extractDocumentText, indexDocument } from '../services/documents.js';
 import { downloadUrl, recordingConfigured, refreshRecording, startRecording, stopRecording } from '../services/recording.js';
 import { createHash, randomBytes } from 'node:crypto';
 import { optionalAuth, requireAuth } from '../middleware/auth.js';
@@ -31,19 +36,45 @@ import { env } from '../config/env.js';
 const router = Router();
 
 const CreateBody = z.object({
+  prep: z.lazy(() => PrepInput).optional(),
   title: z.string().trim().min(1).max(120).default('Untitled meeting'),
   scheduledFor: z.coerce.date().optional(),
   settings: z
-    .object({ allowGuests: z.boolean().optional(), aiEnabled: z.boolean().optional(), aiProactive: z.boolean().optional(), locked: z.boolean().optional(), waitingRoom: z.boolean().optional() })
+    .object({ allowGuests: z.boolean().optional(), aiEnabled: z.boolean().optional(), aiProactive: z.boolean().optional(), locked: z.boolean().optional(), waitingRoom: z.boolean().optional(), aiReplyMode: z.enum(['named', 'any']).optional() })
     .optional(),
 });
 
+const AgendaInput = z
+  .array(
+    z.object({
+      id: z.string().max(40).optional(),
+      title: z.string().trim().min(1).max(200),
+      minutes: z.number().int().min(1).max(600).nullable().optional(),
+    }),
+  )
+  .max(30);
+
+const PrepInput = z.object({
+  goal: z.string().trim().max(1000).optional(),
+  agenda: AgendaInput.optional(),
+});
+
+/** Stable ids so the AI's progress tracking survives edits. */
+function normaliseAgenda(items: z.infer<typeof AgendaInput>) {
+  return items.map((a, i) => ({
+    id: a.id && /^[\w-]{1,40}$/.test(a.id) ? a.id : `a${Date.now().toString(36)}${i}`,
+    title: a.title,
+    ...(a.minutes ? { minutes: a.minutes } : {}),
+  }));
+}
+
 const UpdateBody = z
   .object({
+    prep: PrepInput.optional(),
     title: z.string().trim().min(1).max(120).optional(),
     scheduledFor: z.coerce.date().nullable().optional(),
     settings: z
-      .object({ allowGuests: z.boolean().optional(), aiEnabled: z.boolean().optional(), aiProactive: z.boolean().optional(), locked: z.boolean().optional(), waitingRoom: z.boolean().optional() })
+      .object({ allowGuests: z.boolean().optional(), aiEnabled: z.boolean().optional(), aiProactive: z.boolean().optional(), locked: z.boolean().optional(), waitingRoom: z.boolean().optional(), aiReplyMode: z.enum(['named', 'any']).optional() })
       .optional(),
   })
   .refine((b) => Object.keys(b).length > 0, 'Nothing to update');
@@ -68,7 +99,12 @@ const RECORDING_NOW = { status: 'active', stopRequestedAt: { $exists: false } } 
 /** Room metadata = what the agent and the browsers need to know live. */
 async function pushRoomState(meeting: MeetingDoc): Promise<void> {
   const recording = !!(await RecordingModel.exists({ meetingCode: meeting.code, ...RECORDING_NOW }));
-  await setRoomSettings(meeting.code, { aiProactive: meeting.settings?.aiProactive ?? true, recording });
+  await setRoomSettings(meeting.code, {
+    aiProactive: meeting.settings?.aiProactive ?? true,
+    aiReplyMode: (meeting.settings?.aiReplyMode ?? 'named') as 'named' | 'any',
+    recording,
+    prepVersion: (meeting.updatedAt ?? new Date()).getTime(),
+  });
 }
 
 /** With REQUIRE_EMAIL_VERIFICATION, unverified accounts can join meetings but not create or invite. */
@@ -96,6 +132,9 @@ router.post('/', requireAuth, async (req, res) => {
         host: req.auth!.sub,
         scheduledFor: body.scheduledFor,
         settings: body.settings,
+        prep: body.prep
+          ? { goal: body.prep.goal ?? '', agenda: normaliseAgenda(body.prep.agenda ?? []) }
+          : undefined,
       });
       res.status(201).json({ meeting: toPublicMeeting(meeting) });
       return;
@@ -125,6 +164,7 @@ router.get('/:code', optionalAuth, async (req, res) => {
       hostName: host?.name ?? 'Unknown',
       isHost: meeting.host.toString() === req.auth?.sub,
       recordingAvailable: recordingConfigured(),
+      documents: await MeetingDocumentModel.countDocuments({ meetingCode: meeting.code }),
     },
   });
 });
@@ -142,6 +182,9 @@ router.patch('/:code', requireAuth, async (req, res) => {
   if (body.settings?.aiProactive !== undefined) meeting.settings!.aiProactive = body.settings.aiProactive;
   if (body.settings?.locked !== undefined) meeting.settings!.locked = body.settings.locked;
   if (body.settings?.waitingRoom !== undefined) meeting.settings!.waitingRoom = body.settings.waitingRoom;
+  if (body.settings?.aiReplyMode !== undefined) meeting.settings!.aiReplyMode = body.settings.aiReplyMode;
+  if (body.prep?.goal !== undefined) meeting.set('prep.goal', body.prep.goal);
+  if (body.prep?.agenda !== undefined) meeting.set('prep.agenda', normaliseAgenda(body.prep.agenda));
   const aiChanged = body.settings?.aiEnabled !== undefined && meeting.isModified('settings.aiEnabled');
   await meeting.save();
 
@@ -152,7 +195,9 @@ router.patch('/:code', requireAuth, async (req, res) => {
     } else if (aiChanged) {
       await removeAgents(meeting.code);
     }
-    if (body.settings?.aiProactive !== undefined) await pushRoomState(meeting);
+    if (body.settings?.aiProactive !== undefined || body.settings?.aiReplyMode !== undefined || body.prep !== undefined) {
+      await pushRoomState(meeting);
+    }
   } catch (err) {
     logger.warn({ err, code: meeting.code }, 'could not apply live AI settings');
   }
@@ -461,6 +506,82 @@ router.delete('/:code/insights/:sessionId/:kind/:itemId', requireAuth, async (re
   const r = await MeetingInsightModel.updateOne({ _id: session._id }, { $pull: { [field]: { id: String(req.params.itemId) } } });
   if (r.modifiedCount === 0) throw notFound('Item not found');
   await MeetingInsightModel.updateOne({ _id: session._id }, editedUpdate(req.auth!.sub));
+  res.json({ ok: true });
+});
+
+// ---------- documents for the AI (prepared before the meeting) ----------
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_FILE_BYTES, files: 1 },
+});
+
+const publicDoc = (d: { _id: unknown; filename: string; mimeType: string; sizeBytes: number; pages?: number | null; chars: number; truncated?: boolean | null; indexed?: boolean | null; createdAt?: Date }) => ({
+  id: String(d._id),
+  filename: d.filename,
+  mimeType: d.mimeType,
+  sizeBytes: d.sizeBytes,
+  pages: d.pages ?? null,
+  chars: d.chars,
+  truncated: !!d.truncated,
+  indexed: !!d.indexed,
+  createdAt: d.createdAt ?? null,
+});
+
+router.get('/:code/documents', requireAuth, async (req, res) => {
+  const meeting = await findByCode(req.params.code as string);
+  await assertCanSeeInsights(req, meeting);
+  const docs = await MeetingDocumentModel.find({ meetingCode: meeting.code }).sort({ createdAt: 1 }).select({ text: 0 }).lean();
+  res.json({ documents: docs.map(publicDoc) });
+});
+
+router.post('/:code/documents', requireAuth, upload.single('file'), async (req, res) => {
+  const meeting = await findByCode(req.params.code as string);
+  assertHost(req, meeting);
+  if (meeting.status === 'ended') throw gone('This meeting has ended');
+  const file = req.file;
+  if (!file) throw badRequest('Choose a file to upload');
+  if ((await MeetingDocumentModel.countDocuments({ meetingCode: meeting.code })) >= MAX_FILES_PER_MEETING) {
+    throw badRequest(`A meeting can have up to ${MAX_FILES_PER_MEETING} documents`);
+  }
+  // Browsers send the name as latin1 in multipart; restore UTF-8 names (e.g. Hindi file names).
+  const filename = Buffer.from(file.originalname, 'latin1').toString('utf8').slice(0, 200);
+  const { text, pages, truncated } = await extractDocumentText(file.buffer, filename);
+
+  const doc = await MeetingDocumentModel.create({
+    meetingCode: meeting.code,
+    uploadedBy: req.auth!.sub,
+    filename,
+    mimeType: file.mimetype,
+    sizeBytes: file.size,
+    pages,
+    text,
+    chars: text.length,
+    truncated,
+  });
+
+  if (aiConfigured()) {
+    try {
+      await indexDocument(getAi(), { id: doc.id, meetingCode: meeting.code, filename, text });
+      doc.indexed = true;
+      await doc.save();
+    } catch (err) {
+      logger.warn({ err, code: meeting.code }, 'document saved but not indexed');
+    }
+  }
+  await pushRoomState(meeting); // a running AI reloads its material
+  res.status(201).json({ document: publicDoc(doc.toObject()) });
+});
+
+router.delete('/:code/documents/:docId', requireAuth, async (req, res) => {
+  const meeting = await findByCode(req.params.code as string);
+  assertHost(req, meeting);
+  const id = String(req.params.docId);
+  if (!/^[a-f0-9]{24}$/.test(id)) throw notFound('Document not found');
+  const r = await MeetingDocumentModel.deleteOne({ _id: id, meetingCode: meeting.code });
+  if (r.deletedCount === 0) throw notFound('Document not found');
+  await MemoryChunkModel.deleteMany({ kind: 'document', ref: id });
+  await pushRoomState(meeting);
   res.json({ ok: true });
 });
 

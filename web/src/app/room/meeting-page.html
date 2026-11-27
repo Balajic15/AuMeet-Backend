@@ -307,6 +307,17 @@
             @if (m.status === 'live') { <span class="live-chip"><span class="live-dot"></span> In progress</span> }
           </p>
 
+          @if (m.prep?.goal || m.prep?.agenda?.length) {
+            <div class="prep">
+              @if (m.prep.goal) { <p class="prep-goal"><strong>Goal:</strong> {{ m.prep.goal }}</p> }
+              @if (m.prep.agenda.length) {
+                <ol class="prep-agenda">
+                  @for (a of m.prep.agenda; track a.id) { <li>{{ a.title }}@if (a.minutes) { <span class="mins"> · {{ a.minutes }} min</span> }</li> }
+                </ol>
+              }
+              @if (m.documents) { <p class="prep-docs">{{ m.documents }} document{{ m.documents === 1 ? '' : 's' }} shared with the AI</p> }
+            </div>
+          }
           @if (m.settings.aiEnabled) {
             <div class="ai-note">
               <span class="pav-ai"><span></span><span></span><span></span></span>

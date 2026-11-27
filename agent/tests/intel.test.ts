@@ -88,7 +88,7 @@ describe('prompt + schema', () => {
   it('produces a Gemini-ready JSON schema', () => {
     const schema = modelOutputJsonSchema();
     expect(schema['$schema']).toBeUndefined();
-    expect(Object.keys(schema['properties'] as object)).toEqual(['summary', 'topics', 'decisions', 'actionItems', 'openQuestions']);
+    expect(Object.keys(schema['properties'] as object)).toEqual(['summary', 'topics', 'decisions', 'actionItems', 'openQuestions', 'progress']);
   });
 
   it('numbers transcript lines and teaches the disputed-decision rule', () => {

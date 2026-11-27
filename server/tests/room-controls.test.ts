@@ -112,7 +112,7 @@ describe('in-meeting controls', () => {
     expect(lk.dispatchAgent).toHaveBeenCalledWith(code, { meetingTitle: 'Live', proactive: true });
 
     await request(app).patch(`/api/meetings/${code}`).set(host.auth).send({ settings: { aiProactive: false } });
-    expect(lk.setRoomSettings).toHaveBeenCalledWith(code, { aiProactive: false, recording: false });
+    expect(lk.setRoomSettings).toHaveBeenCalledWith(code, expect.objectContaining({ aiProactive: false, aiReplyMode: 'named', recording: false }));
 
     // Unrelated edits don't touch the AI.
     lk.dispatchAgent.mockClear();

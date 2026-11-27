@@ -1,6 +1,7 @@
 import type { AiClient } from '../ai/gemini.js';
 import { MeetingInsightModel, TranscriptLineModel } from '../models/Insights.js';
 import { MemoryChunkModel } from '../models/MemoryChunk.js';
+import { MeetingModel } from '../models/Meeting.js';
 import { buildChunks } from './chunks.js';
 import { RECAP_SYSTEM, RecapOutput, recapPrompt } from './recap.js';
 import type { Recap, SessionDoc, TranscriptRow } from './types.js';
@@ -50,12 +51,17 @@ export async function processSession(
   }
 
   try {
-    const out = await ai.structured(RecapOutput, { system: RECAP_SYSTEM, prompt: recapPrompt(session, lines), temperature: 0.2 });
+    const meeting = await MeetingModel.findOne({ code: session.meetingCode }).select({ prep: 1 }).lean();
+    const prep = { goal: meeting?.prep?.goal ?? '', agenda: meeting?.prep?.agenda ?? [] };
+    const out = await ai.structured(RecapOutput, { system: RECAP_SYSTEM, prompt: recapPrompt(session, lines, prep), temperature: 0.2 });
     const recap: Recap = {
       headline: out.headline.trim(),
       overview: out.overview.trim(),
       highlights: out.highlights.map((h) => h.trim()).filter(Boolean).slice(0, 6),
       nextSteps: out.nextSteps.map((h) => h.trim()).filter(Boolean).slice(0, 6),
+      goalOutcome: prep.goal && out.goalOutcome && out.goalOutcome.status !== 'no_goal'
+        ? { status: out.goalOutcome.status, summary: out.goalOutcome.summary.trim() }
+        : null,
       generatedAt: now.toISOString(),
     };
 

@@ -58,8 +58,45 @@ export const ModelOutput = z.object({
       evidence: Evidence,
     }),
   ),
+  progress: z
+    .object({
+      goalStatus: z
+        .enum(['no_goal', 'on_track', 'drifting', 'off_track', 'achieved'])
+        .describe('How the discussion relates to the MEETING GOAL; "no_goal" when there is none'),
+      goalReason: Str.describe('One short sentence explaining the goal status, or ""'),
+      agenda: z.array(
+        z.object({
+          id: Str.describe('Agenda item id exactly as given'),
+          status: z.enum(['not_started', 'in_progress', 'done', 'skipped']),
+          note: Str.describe('Very short note on what was concluded, or ""'),
+        }),
+      ),
+    })
+    .optional(),
 });
 export type ModelOutput = z.infer<typeof ModelOutput>;
+
+export type AgendaStatus = 'not_started' | 'in_progress' | 'done' | 'skipped';
+export type GoalStatus = 'no_goal' | 'on_track' | 'drifting' | 'off_track' | 'achieved';
+
+export interface AgendaProgress {
+  id: string;
+  title: string;
+  minutes: number | null;
+  status: AgendaStatus;
+  note: string;
+  /** First time the item was seen being discussed / finished (ISO). */
+  startedAt: string | null;
+  doneAt: string | null;
+}
+
+export interface GoalProgress {
+  text: string;
+  status: GoalStatus;
+  reason: string;
+  /** When the current status began (ISO) – e.g. how long the meeting has been off track. */
+  since: string;
+}
 
 export type DecisionStatus = ModelOutput['decisions'][number]['status'];
 
@@ -114,6 +151,9 @@ export interface Insights {
   decisions: Decision[];
   actionItems: ActionItem[];
   openQuestions: OpenQuestion[];
+  /** Only when the host set a goal / agenda. */
+  goal: GoalProgress | null;
+  agenda: AgendaProgress[];
   /** Highest transcript line number included in the last analysis. */
   analyzedThrough: number;
   updatedAt: string;
@@ -126,6 +166,8 @@ export function emptyInsights(): Insights {
     decisions: [],
     actionItems: [],
     openQuestions: [],
+    goal: null,
+    agenda: [],
     analyzedThrough: 0,
     updatedAt: new Date(0).toISOString(),
   };

@@ -38,6 +38,13 @@ Open questions: questions raised that are still unanswered; mark answered when r
 
 Topics: the main subjects discussed, short titles; "closed" once the group moved on.
 
+Progress (only when a MEETING GOAL or AGENDA is given):
+- goalStatus: "on_track" while the discussion serves the goal; "drifting" when it wanders onto
+  unrelated topics for a while; "off_track" when a long stretch has nothing to do with the goal;
+  "achieved" only when the goal is clearly met (e.g. the decision it asks for was explicitly agreed).
+- For every agenda item (use its id exactly): "in_progress" while it is being discussed, "done" once
+  the group concluded it or moved on after covering it, "skipped" if explicitly postponed.
+
 Write notes in the language mostly used in the meeting. Be concise.`;
 
 /** The user turn: meeting facts, current notes, and the recent transcript. */
@@ -48,6 +55,10 @@ export function analystPrompt(opts: {
   current: Insights;
   lines: Utterance[];
   final: boolean;
+  goal?: string;
+  agenda?: Array<{ id: string; title: string; minutes: number | null }>;
+  /** Minutes since the meeting started. */
+  elapsedMinutes?: number;
 }): string {
   const { current } = opts;
   const notes = {
@@ -91,6 +102,17 @@ export function analystPrompt(opts: {
     `Meeting: "${opts.title}"`,
     `Meeting date: ${opts.meetingDate.toISOString().slice(0, 10)} (${opts.meetingDate.toLocaleDateString('en-US', { weekday: 'long', timeZone: 'UTC' })})`,
     `Participants so far: ${opts.participants.join(', ') || 'unknown'}`,
+    opts.goal ? `MEETING GOAL: ${opts.goal}` : '',
+    opts.agenda?.length
+      ? 'AGENDA (id: title [planned minutes] – current status):\n' +
+        opts.agenda
+          .map((a) => {
+            const cur = current.agenda.find((x) => x.id === a.id);
+            return `${a.id}: ${a.title}${a.minutes ? ` [${a.minutes} min]` : ''} – ${cur?.status ?? 'not_started'}`;
+          })
+          .join('\n')
+      : '',
+    opts.elapsedMinutes !== undefined ? `Minutes since the meeting started: ${opts.elapsedMinutes}` : '',
     opts.final ? 'The meeting has ENDED. Produce the final notes and a complete summary.' : '',
     `Lines up to #${current.analyzedThrough} were already analysed into the current notes; later lines are new.`,
     '',

@@ -5,6 +5,10 @@ import { Schema, model, Types, type HydratedDocument, type InferSchemaType } fro
 // ended – host ended the meeting; it can no longer be joined
 export const MEETING_STATUSES = ['idle', 'live', 'ended'] as const;
 
+/** How readily the AI answers: only when addressed by name, or any question asked in the room. */
+export const AI_REPLY_MODES = ['named', 'any'] as const;
+export type AiReplyMode = (typeof AI_REPLY_MODES)[number];
+
 const ParticipantSchema = new Schema(
   {
     // LiveKit identity – `user:<id>` for accounts, `guest:<id>` for guests.
@@ -14,6 +18,16 @@ const ParticipantSchema = new Schema(
     role: { type: String, enum: ['host', 'participant', 'guest'], required: true },
     firstJoinedAt: { type: Date, default: Date.now },
     lastJoinedAt: { type: Date, default: Date.now },
+  },
+  { _id: false },
+);
+
+const AgendaItemSchema = new Schema(
+  {
+    id: { type: String, required: true },
+    title: { type: String, required: true, trim: true, maxlength: 200 },
+    /** Planned time box in minutes (optional). */
+    minutes: { type: Number, min: 1, max: 600 },
   },
   { _id: false },
 );
@@ -31,10 +45,16 @@ const MeetingSchema = new Schema(
       aiEnabled: { type: Boolean, default: true },
       // AI may speak up on its own (confirm decisions, ask for owners). Off = only when asked.
       aiProactive: { type: Boolean, default: true },
+      aiReplyMode: { type: String, enum: AI_REPLY_MODES, default: 'named' },
       // Host locked the meeting: nobody new can join (the host still can).
       locked: { type: Boolean, default: false },
       // People wait in the lobby until the host admits them.
       waitingRoom: { type: Boolean, default: false },
+    },
+    // Optional preparation the AI uses to keep the meeting on track.
+    prep: {
+      goal: { type: String, trim: true, maxlength: 1000 },
+      agenda: { type: [AgendaItemSchema], default: [] },
     },
     scheduledFor: { type: Date },
     startedAt: { type: Date },
@@ -62,8 +82,13 @@ export function toPublicMeeting(m: MeetingDoc) {
       allowGuests: m.settings?.allowGuests ?? true,
       aiEnabled: m.settings?.aiEnabled ?? true,
       aiProactive: m.settings?.aiProactive ?? true,
+      aiReplyMode: (m.settings?.aiReplyMode ?? 'named') as AiReplyMode,
       locked: m.settings?.locked ?? false,
       waitingRoom: m.settings?.waitingRoom ?? false,
+    },
+    prep: {
+      goal: m.prep?.goal ?? '',
+      agenda: (m.prep?.agenda ?? []).map((a) => ({ id: a.id, title: a.title, minutes: a.minutes ?? null })),
     },
     scheduledFor: m.scheduledFor ?? null,
     startedAt: m.startedAt ?? null,

@@ -115,6 +115,11 @@ export type PanelTab = 'chat' | 'people' | 'insights';
                    (change)="setting.emit({ aiProactive: $any($event.target).checked })" />
             AI can speak up on its own
           </label>
+          <label class="switch sub">
+            <input type="checkbox" [checked]="m.settings.aiReplyMode === 'any'" [disabled]="saving() || !m.settings.aiEnabled"
+                   (change)="setting.emit({ aiReplyMode: $any($event.target).checked ? 'any' : 'named' })" />
+            AI also answers questions asked to the room
+          </label>
           @if (m.settings.aiEnabled && !room.hasAgent()) {
             <button type="button" class="btn btn-outline small invite-host" [disabled]="invitingAi()" (click)="inviteAi.emit()">
               <app-icon name="sparkles" [size]="16" /> {{ invitingAi() ? 'Inviting AI…' : 'Invite AI now' }}

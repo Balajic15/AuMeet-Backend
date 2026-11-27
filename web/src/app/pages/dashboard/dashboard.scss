@@ -454,3 +454,17 @@
     cursor: default;
   }
 }
+
+.sub-field {
+  margin: 12px 0 0 28px;
+
+  select.input {
+    height: 40px;
+    font-size: 14px;
+  }
+  label {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-muted);
+  }
+}

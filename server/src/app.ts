@@ -64,6 +64,7 @@ export function createApp() {
   app.use('/api/auth', authRoutes);
   // Invitations send real email.
   app.use('/api/meetings/:code/invite', limiter(20));
+  app.use('/api/meetings/:code/documents', limiter(60));
   app.use('/api/meetings', meetingRoutes);
   // Each question costs an embedding + a model call.
   app.use('/api/memory/ask', limiter(40));

@@ -1,6 +1,6 @@
 import { Schema, model, type InferSchemaType } from 'mongoose';
 
-export const CHUNK_KINDS = ['recap', 'decision', 'task', 'transcript'] as const;
+export const CHUNK_KINDS = ['recap', 'decision', 'task', 'transcript', 'document'] as const;
 
 /**
  * A searchable piece of a past meeting with its embedding. Built by the worker

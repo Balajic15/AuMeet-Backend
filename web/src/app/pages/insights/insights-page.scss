@@ -88,3 +88,15 @@ select.input, input[type='date'].input { font-size: 15px; height: 44px; }
 .rec-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--danger); }
 .muted-sm { color: var(--text-muted); font-size: 13px; }
 .failed { color: var(--danger); }
+
+.goal-outcome {
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  border-left: 3px solid #777;
+  background: var(--surface-sunken);
+  font-size: 14.5px;
+  line-height: 1.5;
+}
+.o-met { border-left-color: var(--brand); }
+.o-partly_met { border-left-color: #ffb020; }
+.o-not_met { border-left-color: var(--danger); }

@@ -6,6 +6,11 @@ const names = (xs: string[]) => xs.join(', ');
 export function renderNotes(i: Insights): string {
   const lines: string[] = [];
   if (i.summary) lines.push(`Summary so far: ${i.summary}`);
+  if (i.goal) lines.push(`Goal progress: ${i.goal.status.replace('_', ' ')}${i.goal.reason ? ` – ${i.goal.reason}` : ''}`);
+  if (i.agenda.length) {
+    lines.push('Agenda progress:');
+    for (const a of i.agenda) lines.push(`- ${a.title}: ${a.status.replace('_', ' ')}${a.note ? ` (${a.note})` : ''}`);
+  }
 
   const decisions = i.decisions.filter((d) => d.status !== 'rejected');
   if (decisions.length) {

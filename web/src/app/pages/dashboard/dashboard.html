@@ -130,6 +130,9 @@
                 @if (m.settings.aiEnabled) {
                   <span class="badge ai" title="AI participant on"><app-icon name="sparkles" [size]="12" /> AI</span>
                 }
+                @if (m.prep?.goal || m.prep?.agenda?.length) {
+                  <span class="badge" title="Goal / agenda prepared">Prepared</span>
+                }
               </div>
             </div>
 
@@ -157,6 +160,9 @@
                   </button>
                   @if (rowMenu() === m.id) {
                     <div class="menu row-menu" role="menu">
+                      <button type="button" role="menuitem" (click)="openPrepare(m)">
+                        <app-icon name="sparkles" [size]="18" /> Prepare (goal, agenda, files)
+                      </button>
                       <button type="button" role="menuitem" (click)="openInvite(m)">
                         <app-icon name="mail" [size]="18" /> Invite by email
                       </button>
@@ -191,10 +197,16 @@
         </button>
       </div>
       <div class="dlg-actions">
-        <button type="button" class="btn btn-outline" (click)="openInvite(m)"><app-icon name="mail" [size]="16" /> Invite by email</button>
+        <button type="button" class="btn btn-outline" (click)="openPrepare(m)"><app-icon name="sparkles" [size]="16" /> Prepare</button>
+        <button type="button" class="btn btn-outline" (click)="openInvite(m)"><app-icon name="mail" [size]="16" /> Invite</button>
         <button type="button" class="btn btn-primary" (click)="join(m)">Join now</button>
       </div>
     </app-modal>
+  }
+
+  @case ('prepare') {
+    @let m = $any(dialog()).meeting;
+    <app-prepare-dialog [meeting]="m" (saved)="onPrepared($event)" (closed)="dialog.set(null)" />
   }
 
   @case ('invite') {
@@ -266,6 +278,13 @@
         </div>
         <label class="check"><input type="checkbox" formControlName="aiEnabled" /> AI participant joins the meeting</label>
         <label class="check sub"><input type="checkbox" formControlName="aiProactive" /> AI can speak up on its own (e.g. to confirm decisions)</label>
+        <div class="field sub-field">
+          <label for="e-reply">The AI answers</label>
+          <select id="e-reply" class="input" formControlName="aiReplyMode">
+            <option value="named">Only when someone says “AuMeet”</option>
+            <option value="any">Also questions asked to the room</option>
+          </select>
+        </div>
         <label class="check"><input type="checkbox" formControlName="allowGuests" /> Allow guests without an account</label>
         <label class="check"><input type="checkbox" formControlName="waitingRoom" /> Waiting room: I admit people before they join</label>
         <div class="dlg-actions">

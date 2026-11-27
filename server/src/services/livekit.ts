@@ -173,7 +173,10 @@ export async function removeAgents(roomName: string): Promise<number> {
  * Live room state in room metadata: the agent reads aiProactive, every browser reads recording
  * (to show the REC badge).
  */
-export async function setRoomSettings(roomName: string, settings: { aiProactive: boolean; recording?: boolean }): Promise<void> {
+export async function setRoomSettings(
+  roomName: string,
+  settings: { aiProactive: boolean; aiReplyMode?: 'named' | 'any'; recording?: boolean; prepVersion?: number },
+): Promise<void> {
   try {
     await rooms().updateRoomMetadata(roomName, JSON.stringify(settings));
   } catch (err) {

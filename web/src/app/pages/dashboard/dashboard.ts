@@ -15,6 +15,7 @@ import { UserMenu } from '../../shared/user-menu';
 import { MemoryService, type MyTask, type Overview } from '../../core/memory.service';
 import { AskBox } from './ask-box';
 import { MyTasks } from './my-tasks';
+import { PrepareDialog } from './prepare-dialog';
 
 type Tab = 'upcoming' | 'recent' | 'tasks';
 type Dialog =
@@ -22,7 +23,8 @@ type Dialog =
   | { kind: 'schedule' }
   | { kind: 'settings'; meeting: Meeting }
   | { kind: 'end'; meeting: Meeting }
-  | { kind: 'invite'; meeting: Meeting };
+  | { kind: 'invite'; meeting: Meeting }
+  | { kind: 'prepare'; meeting: Meeting };
 
 /** Turns a Date into the value a <input type="datetime-local"> expects (local time). */
 function toLocalInput(d: Date): string {
@@ -39,7 +41,7 @@ function nextHalfHour(): Date {
 @Component({
   selector: 'app-dashboard',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [Icon, Modal, UserMenu, ReactiveFormsModule, RouterLink, AskBox, MyTasks],
+  imports: [Icon, Modal, UserMenu, ReactiveFormsModule, RouterLink, AskBox, MyTasks, PrepareDialog],
   host: { '(document:click)': 'closeMenus($event)' },
   templateUrl: './dashboard.html',
   styleUrl: './dashboard.scss',
@@ -101,6 +103,7 @@ export class Dashboard {
     title: new FormControl('', { nonNullable: true, validators: [Validators.required, Validators.maxLength(120)] }),
     when: new FormControl('', { nonNullable: true }),
     waitingRoom: new FormControl(false, { nonNullable: true }),
+    aiReplyMode: new FormControl<'named' | 'any'>('named', { nonNullable: true }),
     allowGuests: new FormControl(true, { nonNullable: true }),
     aiEnabled: new FormControl(true, { nonNullable: true }),
     aiProactive: new FormControl(true, { nonNullable: true }),
@@ -248,6 +251,7 @@ export class Dashboard {
       aiEnabled: m.settings.aiEnabled,
       aiProactive: m.settings.aiProactive ?? true,
       waitingRoom: m.settings.waitingRoom ?? false,
+      aiReplyMode: m.settings.aiReplyMode ?? 'named',
     });
     this.dialog.set({ kind: 'settings', meeting: m });
   }
@@ -262,7 +266,7 @@ export class Dashboard {
       const updated = await this.meetings.update(m.code, {
         title: v.title.trim(),
         scheduledFor: v.when ? new Date(v.when).toISOString() : null,
-        settings: { allowGuests: v.allowGuests, aiEnabled: v.aiEnabled, aiProactive: v.aiProactive, waitingRoom: v.waitingRoom },
+        settings: { allowGuests: v.allowGuests, aiEnabled: v.aiEnabled, aiProactive: v.aiProactive, waitingRoom: v.waitingRoom, aiReplyMode: v.aiReplyMode },
       });
       this.replace(updated);
       this.dialog.set(null);
@@ -292,6 +296,16 @@ export class Dashboard {
 
   protected readonly inviteEmails = new FormControl('', { nonNullable: true });
   protected readonly inviteMessage = new FormControl('', { nonNullable: true });
+
+  protected openPrepare(m: Meeting): void {
+    this.rowMenu.set(null);
+    this.dialog.set({ kind: 'prepare', meeting: m });
+  }
+
+  protected onPrepared(m: Meeting): void {
+    this.replace(m);
+    this.dialog.set(null);
+  }
 
   protected openInvite(m: Meeting): void {
     this.rowMenu.set(null);

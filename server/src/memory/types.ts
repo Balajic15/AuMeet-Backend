@@ -35,6 +35,7 @@ export interface Recap {
   overview: string;
   highlights: string[];
   nextSteps: string[];
+  goalOutcome?: { status: 'met' | 'partly_met' | 'not_met' | 'no_goal'; summary: string } | null;
   generatedAt: string;
 }
 

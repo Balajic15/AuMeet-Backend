@@ -60,3 +60,24 @@ describe('InsightsView', () => {
     expect(deleted).toEqual([{ kind: 'tasks', id: 't1' }]);
   });
 });
+
+describe('InsightsView – goal and agenda', () => {
+  it('shows the goal status and agenda progress', async () => {
+    const f = await render({
+      insights: {
+        ...notes,
+        goal: { text: 'Decide the database', status: 'drifting', reason: 'talking about the offsite', since: '' },
+        agenda: [
+          { id: 'a1', title: 'Database choice', minutes: 10, status: 'done', note: 'PostgreSQL', startedAt: '2026-11-27T10:00:00Z', doneAt: '2026-11-27T10:08:00Z' },
+          { id: 'a2', title: 'Owners', minutes: 5, status: 'not_started', note: '', startedAt: null, doneAt: null },
+        ],
+      },
+    });
+    const el = f.nativeElement as HTMLElement;
+    expect(el.querySelector('.goal-text')?.textContent).toBe('Decide the database');
+    expect(el.querySelector('.goal-status')?.textContent).toContain('Drifting – talking about the offsite');
+    expect(el.textContent).toContain('1/2');
+    expect(el.querySelector('.a-done .a-meta')?.textContent?.replace(/\s+/g, ' ').trim()).toBe('Done · 8/10 min · PostgreSQL');
+    expect(el.querySelector('.a-not_started .a-meta')?.textContent?.replace(/\s+/g, ' ').trim()).toBe('Not started · 5 min');
+  });
+});

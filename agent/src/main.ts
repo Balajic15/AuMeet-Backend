@@ -35,6 +35,8 @@ import { ParticipantListener } from './listener.js';
 import { GREETING, chatReplyInstruction, meetingInstructions, replyInstruction, type MeetingInfo } from './prompts.js';
 import { MeetingTranscript, TranscriptSink } from './transcript.js';
 import { SharedDeviceVoices } from './voices.js';
+import { emptyPrep, loadPrep, renderPrep, type MeetingPrep } from './prep.js';
+import { addressedToPerson, looksLikeQuestion, shouldAnswerQuestion } from './intervene/question.js';
 import { connectMongo } from './db.js';
 import { earlierSessionsBrief, historySearcher } from './memory.js';
 import { z } from 'zod';
@@ -51,6 +53,8 @@ const INSIGHTS_TOPIC = 'aumeet.insights';
 /** Live captions of what people say (the AI's own speech goes out on lk.transcription). */
 const CAPTIONS_TOPIC = 'aumeet.captions';
 const CAPTION_THROTTLE_MS = 250;
+/** "Answer questions in the room" mode: at most one unprompted answer this often. */
+const QUESTION_COOLDOWN_MS = 20_000;
 /** Participant attribute: 'off' = this person opted out of transcription (set in the lobby or the room). */
 const TRANSCRIBE_ATTR = 'aumeet.transcribe';
 /** Participant attribute: '1' = several people speak through this device (enables speaker separation). */
@@ -158,6 +162,7 @@ export default defineAgent<ProcData>({
     // instead of linking the session to a single person. Audio *output* is the AI's voice.
     // ---------- memory of earlier sessions of this meeting link ----------
     let earlier = '';
+    let prep: MeetingPrep = emptyPrep();
     const tools: Record<string, ReturnType<typeof llm.tool>> = {};
     if (mongo) {
       try {
@@ -165,6 +170,28 @@ export default defineAgent<ProcData>({
       } catch (err) {
         logger.warn({ err }, 'could not load earlier sessions');
       }
+      try {
+        prep = await loadPrep(mongo.db, info.meetingCode);
+      } catch (err) {
+        logger.warn({ err }, 'could not load meeting preparation');
+      }
+      const searchDocs = historySearcher(mongo.db, {
+        apiKey: cfg.GOOGLE_API_KEY,
+        model: cfg.EMBEDDING_MODEL,
+        dims: cfg.EMBEDDING_DIMS,
+        meetingCode: info.meetingCode,
+        source: 'documents',
+      });
+      tools['search_meeting_documents'] = llm.tool({
+        description:
+          'Search the documents the host attached to this meeting (specs, notes, slides). Use for any question about ' +
+          'their content, and say which document the answer comes from.',
+        parameters: z.object({ query: z.string().describe('What to look for, e.g. "data retention period"') }),
+        execute: async ({ query }) => {
+          const hits = await searchDocs(query, 6);
+          return hits.length ? hits.map((h) => h.text) : 'Nothing relevant found in the meeting documents.';
+        },
+      });
       const searchHistory = historySearcher(mongo.db, {
         apiKey: cfg.GOOGLE_API_KEY,
         model: cfg.EMBEDDING_MODEL,
@@ -182,7 +209,14 @@ export default defineAgent<ProcData>({
         },
       });
     }
-    const baseInstructions = earlier ? `${meetingInstructions(info)}\n\n${earlier}` : meetingInstructions(info);
+    const composeBase = () =>
+      [meetingInstructions(info), renderPrep(prep), earlier].filter(Boolean).join('\n\n');
+    let baseInstructions = composeBase();
+    let latestNotes = '';
+    const refreshInstructions = () =>
+      assistant
+        .updateInstructions(latestNotes ? `${baseInstructions}\n\nCURRENT MEETING NOTES\n${latestNotes}` : baseInstructions)
+        .catch(() => {});
     const assistant = new voice.Agent({ instructions: baseInstructions, tools });
 
     // ---------- conversation intelligence ----------
@@ -199,15 +233,14 @@ export default defineAgent<ProcData>({
       transcript,
       analyze: geminiAnalyzer(structured),
       people: () => [...people.values()],
+      prep: () => ({ goal: prep.goal, agenda: prep.agenda }),
       onUpdate: (insights) => {
         void sendInsights(insights);
         intervention.notesUpdated();
         store?.save(insights, [...people.values()]).catch((err) => logger.warn({ err }, 'could not save insights'));
         // The voice assistant answers "what did we decide?" from the same notes everyone sees.
-        const notes = renderNotes(insights);
-        void assistant
-          .updateInstructions(notes ? `${baseInstructions}\n\nCURRENT MEETING NOTES\n${notes}` : baseInstructions)
-          .catch(() => {});
+        latestNotes = renderNotes(insights);
+        void refreshInstructions();
       },
       onError: (err) => logger.warn({ err }, 'meeting analysis failed; will retry with the next batch'),
     });
@@ -320,7 +353,10 @@ export default defineAgent<ProcData>({
       }
 
       const { addressed, reason } = isAddressedToAgent(text, speakerKey, now, { lastAgentReplyAt, lastAddressedBy });
-      if (!addressed || !reason) return;
+      if (!addressed || !reason) {
+        if (prep.replyMode === 'any') void maybeAnswerQuestion(who, speakerKey, text, language);
+        return;
+      }
 
       lastAddressedBy = speakerKey;
       voiceOut.updateOptions({ language: voiceLanguage(language) });
@@ -328,6 +364,34 @@ export default defineAgent<ProcData>({
         instructions: replyInstruction(who, languageName(language), reason),
         allowInterruptions: true,
       });
+    };
+
+    // Host chose "answer questions in the room": answer unaddressed questions when it clearly helps.
+    let lastQuestionAnswerAt = 0;
+    const maybeAnswerQuestion = async (who: string, speakerKey: string, text: string, language: string) => {
+      if (!looksLikeQuestion(text) || addressedToPerson(text, [...people.values()].map((x) => x.name))) return;
+      if (Date.now() - lastQuestionAnswerAt < QUESTION_COOLDOWN_MS || !agentIdle()) return;
+      try {
+        const verdict = await shouldAnswerQuestion(structured, {
+          question: text,
+          speaker: who,
+          recent: transcript.all.slice(-25),
+          insights: analyzer.insights,
+          prepSummary: renderPrep(prep),
+        });
+        logger.debug({ answer: verdict.answer, reason: verdict.reason }, 'room question verdict');
+        // Someone may have answered meanwhile; only speak into a pause.
+        if (!verdict.answer || !agentIdle()) return;
+        lastQuestionAnswerAt = Date.now();
+        lastAddressedBy = speakerKey;
+        voiceOut.updateOptions({ language: voiceLanguage(language) });
+        session.generateReply({
+          instructions: `${who} asked the room: "${text}". Nobody addressed you, but the host lets you answer such questions. Answer briefly in ${languageName(language)}.`,
+          allowInterruptions: true,
+        });
+      } catch (err) {
+        logger.debug({ err }, 'room question check failed');
+      }
     };
 
     // ---------- chat ----------
@@ -449,9 +513,22 @@ export default defineAgent<ProcData>({
     };
 
     // Host toggled "AI can speak up on its own" during the meeting.
+    let lastPrepVersion: number | null = null;
     const applyRoomSettings = (raw: string | undefined) => {
       try {
-        const s = JSON.parse(raw || '{}') as { aiProactive?: boolean };
+        const s = JSON.parse(raw || '{}') as { aiProactive?: boolean; aiReplyMode?: string; prepVersion?: number };
+        if (s.aiReplyMode === 'any' || s.aiReplyMode === 'named') prep.replyMode = s.aiReplyMode;
+        if (typeof s.prepVersion === 'number' && s.prepVersion !== lastPrepVersion && mongo) {
+          lastPrepVersion = s.prepVersion;
+          void loadPrep(mongo.db, info.meetingCode)
+            .then((p) => {
+              prep = { ...p, replyMode: prep.replyMode };
+              baseInstructions = composeBase();
+              void refreshInstructions();
+              logger.info({ goal: !!p.goal, agenda: p.agenda.length, documents: p.documents.length }, 'meeting preparation reloaded');
+            })
+            .catch((err) => logger.warn({ err }, 'could not reload meeting preparation'));
+        }
         if (typeof s.aiProactive === 'boolean' && s.aiProactive !== intervention.isEnabled) {
           intervention.setEnabled(s.aiProactive);
           logger.info({ proactive: s.aiProactive }, 'proactive mode changed by host');

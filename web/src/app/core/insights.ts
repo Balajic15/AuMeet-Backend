@@ -45,8 +45,31 @@ export interface Topic {
   status: 'active' | 'closed';
 }
 
+export type AgendaStatus = 'not_started' | 'in_progress' | 'done' | 'skipped';
+export type GoalStatus = 'no_goal' | 'on_track' | 'drifting' | 'off_track' | 'achieved';
+
+export interface AgendaProgress {
+  id: string;
+  title: string;
+  minutes: number | null;
+  status: AgendaStatus;
+  note: string;
+  startedAt: string | null;
+  doneAt: string | null;
+}
+
+export interface GoalProgress {
+  text: string;
+  status: GoalStatus;
+  reason: string;
+  since: string;
+}
+
 export interface Insights {
   summary: string;
+  /** Only when the host prepared a goal / agenda (older notes may not have these). */
+  goal?: GoalProgress | null;
+  agenda?: AgendaProgress[];
   topics: Topic[];
   decisions: Decision[];
   actionItems: ActionItem[];
@@ -60,6 +83,7 @@ export interface Recap {
   overview: string;
   highlights: string[];
   nextSteps: string[];
+  goalOutcome?: { status: 'met' | 'partly_met' | 'not_met'; summary: string } | null;
   generatedAt: string;
 }
 
