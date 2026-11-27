@@ -16,7 +16,14 @@ import { HttpErrorResponse } from '@angular/common/http';
 import { Router, RouterLink } from '@angular/router';
 import { ConnectionState, createLocalAudioTrack, createLocalVideoTrack, type LocalAudioTrack, type LocalVideoTrack } from 'livekit-client';
 import { AuthService, apiErrorMessage } from '../core/auth.service';
-import { MeetingsService, meetingLink, type LobbyMeeting, type MeetingSettings } from '../core/meetings.service';
+import {
+  MeetingsService,
+  meetingLink,
+  type JoinResponse,
+  type LobbyMeeting,
+  type MeetingSettings,
+  type PendingJoin,
+} from '../core/meetings.service';
 import { Icon } from '../shared/icon';
 import { Modal } from '../shared/modal';
 import { ToastService } from '../shared/toast';
@@ -29,7 +36,7 @@ import { SettingsDialog } from './settings-dialog';
 import { SidePanel, type PanelTab } from './side-panel';
 import { VideoTrackView } from './video-track';
 
-type Phase = 'loading' | 'notfound' | 'error' | 'lobby' | 'joining' | 'room' | 'after';
+type Phase = 'loading' | 'notfound' | 'error' | 'lobby' | 'joining' | 'waiting' | 'room' | 'after';
 
 const GUEST_NAME_KEY = 'aumeet_guest_name';
 const DEVICE_PREFS_KEY = 'aumeet_devices';
@@ -90,6 +97,8 @@ export class MeetingPage implements OnDestroy {
   protected readonly joinError = signal<string | null>(null);
   /** Lobby privacy choice: let the AI transcribe me. */
   protected readonly transcribeMe = signal(true);
+  /** Conference-room mode chosen in the lobby. */
+  protected readonly sharedDevice = signal(false);
   protected readonly lobbyMics = signal<MediaDeviceInfo[]>([]);
   protected readonly lobbyCams = signal<MediaDeviceInfo[]>([]);
   protected readonly devicePrefs = signal(readDevicePrefs());
@@ -104,6 +113,11 @@ export class MeetingPage implements OnDestroy {
   protected readonly reactOpen = signal(false);
   protected readonly removing = signal<ParticipantView | null>(null);
   protected readonly savingSettings = signal(false);
+  /** Host: people waiting to be let in. */
+  protected readonly pending = signal<PendingJoin[]>([]);
+  protected readonly recordingBusy = signal(false);
+  private waitTimer?: ReturnType<typeof setTimeout>;
+  private hostPollTimer?: ReturnType<typeof setInterval>;
   private clock?: ReturnType<typeof setInterval>;
 
   protected readonly isGuest = computed(() => !this.auth.isAuthenticated());
@@ -148,11 +162,20 @@ export class MeetingPage implements OnDestroy {
     effect(() => {
       if (this.rs.mutedByHost() > 0) untracked(() => this.toast.show('The host muted your microphone'));
     });
+    // Everyone is told when recording starts or stops.
+    let wasRecording = false;
+    effect(() => {
+      const rec = this.rs.recording();
+      if (rec !== wasRecording) untracked(() => this.toast.show(rec ? 'This meeting is now being recorded' : 'Recording stopped'));
+      wasRecording = rec;
+    });
   }
 
   ngOnDestroy(): void {
     this.stopPreview();
     clearInterval(this.clock);
+    clearTimeout(this.waitTimer);
+    clearInterval(this.hostPollTimer);
   }
 
   // ---------- loading & lobby ----------
@@ -282,12 +305,12 @@ export class MeetingPage implements OnDestroy {
         name: this.isGuest() ? this.guestName().trim() : undefined,
         transcribe: m.settings.aiEnabled ? this.transcribeMe() : undefined,
       });
-      // Hand the devices over to LiveKit (it opens its own tracks with the same permissions).
-      this.stopPreview();
-      await this.rs.connect(res.livekit.url, res.livekit.token, { mic: this.micOn(), cam: this.camOn() });
-      this.phase.set('room');
-      this.now.set(Date.now());
-      this.clock = setInterval(() => this.now.set(Date.now()), 15_000);
+      if ('waiting' in res) {
+        this.phase.set('waiting');
+        this.pollAdmission(m.code, res.requestId, res.secret);
+        return;
+      }
+      await this.enterRoom(res);
     } catch (err) {
       this.phase.set('lobby');
       void this.startPreview();
@@ -300,6 +323,78 @@ export class MeetingPage implements OnDestroy {
         this.phase.set('after');
         this.rs.endReason.set('ended');
       }
+    }
+  }
+
+  private async enterRoom(res: JoinResponse): Promise<void> {
+    const m = this.meeting()!;
+    // Hand the devices over to LiveKit (it opens its own tracks with the same permissions).
+    this.stopPreview();
+    await this.rs.connect(res.livekit.url, res.livekit.token, {
+      mic: this.micOn(),
+      cam: this.camOn(),
+      shared: m.settings.aiEnabled && this.sharedDevice() && this.transcribeMe(),
+    });
+    this.phase.set('room');
+    this.now.set(Date.now());
+    this.clock = setInterval(() => this.now.set(Date.now()), 15_000);
+    if (m.isHost) this.startHostPolling();
+  }
+
+  /** Waiting room: check every 2 s whether the host let us in. */
+  private pollAdmission(code: string, requestId: string, secret: string): void {
+    clearTimeout(this.waitTimer);
+    this.waitTimer = setTimeout(async () => {
+      if (this.phase() !== 'waiting') return;
+      try {
+        const r = await this.meetings.pollJoinRequest(code, requestId, secret);
+        if (r.status === 'admitted') {
+          this.phase.set('joining');
+          await this.enterRoom(r);
+        } else if (r.status === 'denied') {
+          this.phase.set('lobby');
+          this.joinError.set("The host didn't let you in to this meeting.");
+        } else {
+          this.pollAdmission(code, requestId, secret);
+        }
+      } catch (err) {
+        this.phase.set('lobby');
+        void this.startPreview();
+        this.joinError.set(apiErrorMessage(err, 'Your request to join expired. Try again.'));
+      }
+    }, 2000);
+  }
+
+  protected cancelWaiting(): void {
+    clearTimeout(this.waitTimer);
+    this.phase.set('lobby');
+  }
+
+  /** Host: keep the list of people in the waiting room fresh. */
+  private startHostPolling(): void {
+    clearInterval(this.hostPollTimer);
+    const tick = async () => {
+      if (this.phase() !== 'room' || !this.meeting()?.settings.waitingRoom) {
+        if (this.pending().length) this.pending.set([]);
+        return;
+      }
+      try {
+        this.pending.set(await this.meetings.pendingJoins(this.code()));
+      } catch {
+        /* try again next tick */
+      }
+    };
+    void tick();
+    this.hostPollTimer = setInterval(tick, 3000);
+  }
+
+  protected async decide(p: PendingJoin | 'all', action: 'admit' | 'deny'): Promise<void> {
+    const targets = p === 'all' ? this.pending() : [p];
+    this.pending.update((list) => list.filter((x) => !targets.includes(x)));
+    try {
+      await Promise.all(targets.map((t) => this.meetings.decideJoin(this.code(), t.requestId, action)));
+    } catch (err) {
+      this.toast.error(apiErrorMessage(err, 'Could not update the waiting room.'));
     }
   }
 
@@ -375,6 +470,19 @@ export class MeetingPage implements OnDestroy {
       this.toast.error(apiErrorMessage(err, 'Could not change that setting.'));
     } finally {
       this.savingSettings.set(false);
+    }
+  }
+
+  protected async toggleRecording(): Promise<void> {
+    if (this.recordingBusy()) return;
+    this.recordingBusy.set(true);
+    try {
+      if (this.rs.recording()) await this.meetings.stopRecording(this.code());
+      else await this.meetings.startRecording(this.code());
+    } catch (err) {
+      this.toast.error(apiErrorMessage(err, 'Could not change the recording.'));
+    } finally {
+      this.recordingBusy.set(false);
     }
   }
 

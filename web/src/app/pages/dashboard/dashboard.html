@@ -3,6 +3,18 @@
   <app-user-menu />
 </header>
 
+@if (auth.user(); as u) {
+  @if (!u.emailVerified) {
+    <div class="verify-banner" role="status">
+      <app-icon name="mail" [size]="16" />
+      <span>Please confirm your email. We sent a link to <strong>{{ u.email }}</strong>.</span>
+      <button type="button" class="link-btn" [disabled]="resending()" (click)="resendVerification()">
+        {{ resent() ? 'Sent again' : 'Resend link' }}
+      </button>
+    </div>
+  }
+}
+
 <main class="wrap">
   <!-- ======= Start / join ======= -->
   <section class="hero">
@@ -255,6 +267,7 @@
         <label class="check"><input type="checkbox" formControlName="aiEnabled" /> AI participant joins the meeting</label>
         <label class="check sub"><input type="checkbox" formControlName="aiProactive" /> AI can speak up on its own (e.g. to confirm decisions)</label>
         <label class="check"><input type="checkbox" formControlName="allowGuests" /> Allow guests without an account</label>
+        <label class="check"><input type="checkbox" formControlName="waitingRoom" /> Waiting room: I admit people before they join</label>
         <div class="dlg-actions">
           <button type="button" class="btn btn-outline" (click)="dialog.set(null)">Cancel</button>
           <button type="submit" class="btn btn-primary" [disabled]="busy()">

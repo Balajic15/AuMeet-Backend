@@ -7,7 +7,7 @@ export interface ListenerEvents {
   /** Voice activity ended (after the VAD's min silence duration). */
   onSpeechEnd(): void;
   /** A complete utterance from this participant. */
-  onUtterance(text: string, language: string): void;
+  onUtterance(text: string, language: string, speakerId: string | null): void;
   /** Words so far in the current utterance (for live captions); finals are included. */
   onPartial?(text: string): void;
 }
@@ -29,6 +29,8 @@ export class ParticipantListener {
 
   private buffer: string[] = [];
   private bufferLang = '';
+  /** Diarized speaker of the buffered text (shared devices only). */
+  private bufferSpeaker: string | null = null;
   private flushTimer: NodeJS.Timeout | null = null;
 
   constructor(
@@ -79,6 +81,10 @@ export class ParticipantListener {
         if (this.closed) break;
         const alt = ev.alternatives?.[0];
         if (ev.type === stt.SpeechEventType.FINAL_TRANSCRIPT && alt?.text.trim()) {
+          // On a shared device a new voice starts a new utterance.
+          const speaker = alt.speakerId ?? null;
+          if (speaker !== null && this.buffer.length && speaker !== this.bufferSpeaker) this.flush();
+          if (speaker !== null) this.bufferSpeaker = speaker;
           this.buffer.push(alt.text.trim());
           if (alt.language) this.bufferLang = alt.language;
           this.armFlush();
@@ -116,8 +122,10 @@ export class ParticipantListener {
     this.flushTimer = null;
     const text = this.buffer.join(' ').replace(/\s+/g, ' ').trim();
     const lang = this.bufferLang;
+    const speaker = this.bufferSpeaker;
     this.buffer = [];
     this.bufferLang = '';
-    if (text) this.events.onUtterance(text, lang);
+    this.bufferSpeaker = null;
+    if (text) this.events.onUtterance(text, lang, speaker);
   }
 }

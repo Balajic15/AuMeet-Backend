@@ -104,6 +104,7 @@ describe('profile and passwords', () => {
 
   it('resets a forgotten password with a single-use emailed link', async () => {
     await register();
+    mail.length = 0; // ignore the sign-up verification email
     const unknown = await request(app).post('/api/auth/password/forgot').send({ email: 'nobody@test.dev' });
     expect(unknown.status).toBe(200);
     expect(mail).toHaveLength(0);

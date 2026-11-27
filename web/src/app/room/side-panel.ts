@@ -94,6 +94,11 @@ export type PanelTab = 'chat' | 'people' | 'insights';
             <app-icon name="lock" [size]="16" /> Lock meeting (no one new can join)
           </label>
           <label class="switch">
+            <input type="checkbox" [checked]="m.settings.waitingRoom" [disabled]="saving()"
+                   (change)="setting.emit({ waitingRoom: $any($event.target).checked })" />
+            <app-icon name="users" [size]="16" /> Waiting room (you admit people)
+          </label>
+          <label class="switch">
             <input type="checkbox" [checked]="m.settings.aiEnabled" [disabled]="saving()"
                    (change)="setting.emit({ aiEnabled: $any($event.target).checked })" />
             <app-icon name="sparkles" [size]="16" /> AI participant in this meeting
@@ -103,6 +108,12 @@ export type PanelTab = 'chat' | 'people' | 'insights';
                    (change)="setting.emit({ aiProactive: $any($event.target).checked })" />
             AI can speak up on its own
           </label>
+          @if (recordingAvailable()) {
+            <button type="button" class="btn small rec-btn" [class.btn-danger]="recording()" [class.btn-outline]="!recording()"
+                    [disabled]="recordingBusy()" (click)="record.emit()">
+              <span class="rec-dot"></span> {{ recording() ? 'Stop recording' : 'Start recording' }}
+            </button>
+          }
         </div>
       }
       <ul class="people">
@@ -194,6 +205,9 @@ export type PanelTab = 'chat' | 'people' | 'insights';
     .switch { display: flex; align-items: center; gap: 8px; padding: 6px 0; font-size: 14px; cursor: pointer;
       input { width: 16px; height: 16px; margin: 0; accent-color: var(--brand); } }
     .switch.sub { margin-left: 24px; color: var(--text-muted); font-size: 13.5px; }
+    .rec-btn { width: 100%; margin-top: 10px; gap: 8px; }
+    .rec-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--danger); }
+    .btn-danger .rec-dot { background: #000; }
   `,
 })
 export class SidePanel {
@@ -211,6 +225,10 @@ export class SidePanel {
   readonly setting = output<Partial<MeetingSettings>>();
   readonly mute = output<string>();
   readonly remove = output<ParticipantView>();
+  readonly recordingAvailable = input(false);
+  readonly recording = input(false);
+  readonly recordingBusy = input(false);
+  readonly record = output<void>();
 
   protected readonly draft = signal('');
   protected readonly sending = signal(false);

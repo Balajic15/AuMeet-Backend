@@ -41,6 +41,12 @@ import { RoomService } from './room.service';
           <input type="checkbox" [checked]="!rs.transcribed()" (change)="toggleTranscription($any($event.target).checked)" />
           Don't transcribe me (the AI won't hear or note what I say or type)
         </label>
+        @if (rs.transcribed()) {
+          <label class="check">
+            <input type="checkbox" [checked]="rs.sharedDevice()" (change)="toggleShared($any($event.target).checked)" />
+            Several people are using this device. The AI tells voices apart; say "I'm Priya" to name yours.
+          </label>
+        }
       }
     </app-modal>
   `,
@@ -90,6 +96,14 @@ export class SettingsDialog {
       await this.rs.switchDevice(kind, (e.target as HTMLSelectElement).value);
     } catch {
       this.toast.error('Could not switch to that device.');
+    }
+  }
+
+  protected async toggleShared(on: boolean): Promise<void> {
+    try {
+      await this.rs.setSharedDevice(on);
+    } catch {
+      this.toast.error('Could not change that right now.');
     }
   }
 

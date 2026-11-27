@@ -100,6 +100,7 @@ export class Dashboard {
   protected readonly settingsForm = new FormGroup({
     title: new FormControl('', { nonNullable: true, validators: [Validators.required, Validators.maxLength(120)] }),
     when: new FormControl('', { nonNullable: true }),
+    waitingRoom: new FormControl(false, { nonNullable: true }),
     allowGuests: new FormControl(true, { nonNullable: true }),
     aiEnabled: new FormControl(true, { nonNullable: true }),
     aiProactive: new FormControl(true, { nonNullable: true }),
@@ -246,6 +247,7 @@ export class Dashboard {
       allowGuests: m.settings.allowGuests,
       aiEnabled: m.settings.aiEnabled,
       aiProactive: m.settings.aiProactive ?? true,
+      waitingRoom: m.settings.waitingRoom ?? false,
     });
     this.dialog.set({ kind: 'settings', meeting: m });
   }
@@ -260,7 +262,7 @@ export class Dashboard {
       const updated = await this.meetings.update(m.code, {
         title: v.title.trim(),
         scheduledFor: v.when ? new Date(v.when).toISOString() : null,
-        settings: { allowGuests: v.allowGuests, aiEnabled: v.aiEnabled, aiProactive: v.aiProactive },
+        settings: { allowGuests: v.allowGuests, aiEnabled: v.aiEnabled, aiProactive: v.aiProactive, waitingRoom: v.waitingRoom },
       });
       this.replace(updated);
       this.dialog.set(null);
@@ -269,6 +271,22 @@ export class Dashboard {
       this.dialogError.set(apiErrorMessage(err));
     } finally {
       this.busy.set(false);
+    }
+  }
+
+  protected readonly resending = signal(false);
+  protected readonly resent = signal(false);
+
+  protected async resendVerification(): Promise<void> {
+    this.resending.set(true);
+    try {
+      await this.auth.resendVerification();
+      this.resent.set(true);
+      this.toast.show('Verification email sent');
+    } catch (err) {
+      this.toast.error(apiErrorMessage(err, 'Could not send the email right now.'));
+    } finally {
+      this.resending.set(false);
     }
   }
 

@@ -22,6 +22,8 @@ export const REACTION_TOPIC = 'aumeet.reaction';
 /** Participant attributes (set by each person for themselves). */
 export const HAND_ATTR = 'aumeet.hand';
 export const TRANSCRIBE_ATTR = 'aumeet.transcribe';
+/** '1' = several people speak through this device (the AI separates their voices). */
+export const SHARED_ATTR = 'aumeet.shared';
 
 export const REACTIONS = ['👍', '👏', '😂', '🎉', '❤️', '🤔'] as const;
 
@@ -37,6 +39,7 @@ export interface ParticipantView {
   handRaised: boolean;
   /** False when the person opted out of AI transcription. */
   transcribed: boolean;
+  sharedDevice: boolean;
   camera?: VideoTrack;
   screen?: VideoTrack;
 }
@@ -118,6 +121,7 @@ function toView(p: Participant, isLocal: boolean): ParticipantView {
     camOn: !!cam?.track && !cam.isMuted,
     handRaised: p.attributes?.[HAND_ATTR] === '1',
     transcribed: p.attributes?.[TRANSCRIBE_ATTR] !== 'off',
+    sharedDevice: p.attributes?.[SHARED_ATTR] === '1',
     camera: cam?.track && !cam.isMuted ? (cam.track as VideoTrack) : undefined,
     screen: screen?.track && !screen.isMuted ? (screen.track as VideoTrack) : undefined,
   };
@@ -143,6 +147,8 @@ export class RoomService implements OnDestroy {
   /** Set when the host muted this user's microphone remotely (for a one-off notice). */
   readonly mutedByHost = signal(0);
   readonly hasAgent = computed(() => this.participants().some((p) => p.isAgent));
+  /** The host is recording this meeting (room metadata, visible to everyone). */
+  readonly recording = signal(false);
 
   readonly local = computed(() => this.participants().find((p) => p.isLocal));
   readonly micOn = computed(() => this.local()?.micOn ?? false);
@@ -150,6 +156,7 @@ export class RoomService implements OnDestroy {
   readonly screenOn = computed(() => !!this.local()?.screen);
   readonly handRaised = computed(() => !!this.local()?.handRaised);
   readonly transcribed = computed(() => this.local()?.transcribed ?? true);
+  readonly sharedDevice = computed(() => !!this.local()?.sharedDevice);
   /** The first active screen share (shown on the big stage). */
   readonly screenShare = computed(() => this.participants().find((p) => p.screen));
 
@@ -198,6 +205,7 @@ export class RoomService implements OnDestroy {
           /* ignore */
         }
       })
+      .on(RoomEvent.RoomMetadataChanged, (m) => this.readRoomState(m))
       .on(RoomEvent.Disconnected, (reason) => this.onDisconnected(reason));
 
     // What the AI says, streamed word by word.
@@ -266,10 +274,11 @@ export class RoomService implements OnDestroy {
     this.audioHost = el;
   }
 
-  async connect(url: string, token: string, opts: { mic: boolean; cam: boolean }): Promise<void> {
+  async connect(url: string, token: string, opts: { mic: boolean; cam: boolean; shared?: boolean }): Promise<void> {
     this.endReason.set(null);
     this.leaving = false;
     await this.room.connect(url, token);
+    this.readRoomState(this.room.metadata);
     this.refresh();
     // Attach audio for anyone already in the room.
     for (const p of this.room.remoteParticipants.values()) {
@@ -282,6 +291,7 @@ export class RoomService implements OnDestroy {
       opts.mic ? this.room.localParticipant.setMicrophoneEnabled(true, prefs.audioinput ? { deviceId: prefs.audioinput } : undefined) : null,
       opts.cam ? this.room.localParticipant.setCameraEnabled(true, prefs.videoinput ? { deviceId: prefs.videoinput } : undefined) : null,
       prefs.audiooutput ? this.room.switchActiveDevice('audiooutput', prefs.audiooutput) : null,
+      opts.shared ? this.room.localParticipant.setAttributes({ [SHARED_ATTR]: '1' }) : null,
     ]);
     this.refresh();
   }
@@ -311,6 +321,12 @@ export class RoomService implements OnDestroy {
   /** Privacy: stop (or resume) AI transcription of my voice and chat. */
   async setTranscribed(on: boolean): Promise<void> {
     await this.room.localParticipant.setAttributes({ [TRANSCRIBE_ATTR]: on ? 'on' : 'off' });
+    this.refresh();
+  }
+
+  /** Conference-room mode: several people talk through this device. */
+  async setSharedDevice(on: boolean): Promise<void> {
+    await this.room.localParticipant.setAttributes({ [SHARED_ATTR]: on ? '1' : '' });
     this.refresh();
   }
 
@@ -371,6 +387,14 @@ export class RoomService implements OnDestroy {
     if (this.captionTimer) clearInterval(this.captionTimer);
     void this.room.disconnect();
     this.room.removeAllListeners();
+  }
+
+  private readRoomState(raw: string | undefined): void {
+    try {
+      this.recording.set(!!(JSON.parse(raw || '{}') as { recording?: boolean }).recording);
+    } catch {
+      this.recording.set(false);
+    }
   }
 
   private upsertCaption(c: CaptionLine): void {

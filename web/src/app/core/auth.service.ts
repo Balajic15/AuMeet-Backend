@@ -10,6 +10,7 @@ export interface User {
   avatarUrl: string | null;
   /** False for accounts created with Google/GitHub until they set one. */
   hasPassword: boolean;
+  emailVerified: boolean;
   providers: { google: boolean; github: boolean };
 }
 
@@ -76,6 +77,10 @@ export class AuthService {
       this.http.post<{ user: User }>('/api/auth/password/change', { currentPassword, newPassword }),
     );
     this._user.set(res.user);
+  }
+
+  resendVerification(): Promise<unknown> {
+    return firstValueFrom(this.http.post('/api/auth/email/resend', {}));
   }
 
   forgotPassword(email: string): Promise<unknown> {

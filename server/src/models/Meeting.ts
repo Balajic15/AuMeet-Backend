@@ -33,6 +33,8 @@ const MeetingSchema = new Schema(
       aiProactive: { type: Boolean, default: true },
       // Host locked the meeting: nobody new can join (the host still can).
       locked: { type: Boolean, default: false },
+      // People wait in the lobby until the host admits them.
+      waitingRoom: { type: Boolean, default: false },
     },
     scheduledFor: { type: Date },
     startedAt: { type: Date },
@@ -61,6 +63,7 @@ export function toPublicMeeting(m: MeetingDoc) {
       aiEnabled: m.settings?.aiEnabled ?? true,
       aiProactive: m.settings?.aiProactive ?? true,
       locked: m.settings?.locked ?? false,
+      waitingRoom: m.settings?.waitingRoom ?? false,
     },
     scheduledFor: m.scheduledFor ?? null,
     startedAt: m.startedAt ?? null,

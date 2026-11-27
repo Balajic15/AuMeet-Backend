@@ -39,6 +39,24 @@
       }
     </div>
 
+    @if (recordings().length) {
+      <section class="recordings">
+        <h3><span class="rec-dot"></span> Recordings</h3>
+        <ul>
+          @for (r of recordings(); track r.id) {
+            <li>
+              <span>{{ recordingLabel(r) }}</span>
+              @switch (r.status) {
+                @case ('complete') { <a [href]="recordingUrl(r.id)"><app-icon name="download" [size]="15" /> Download</a> }
+                @case ('active') { <span class="muted-sm">Processing…</span> }
+                @default { <span class="muted-sm failed">Failed</span> }
+              }
+            </li>
+          }
+        </ul>
+      </section>
+    }
+
     @if (session(); as s) {
       <div class="tabs" role="tablist">
         <button type="button" role="tab" [class.active]="view() === 'notes'" (click)="view.set('notes')">Notes</button>

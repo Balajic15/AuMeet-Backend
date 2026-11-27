@@ -110,6 +110,7 @@ describe('email invitations', () => {
   it('lets the host invite people, with a calendar file for scheduled meetings', async () => {
     const host = await user('h@test.dev', 'Host');
     const other = await user('o@test.dev', 'Other');
+    mail.length = 0; // ignore sign-up verification emails
     const { code } = (await request(app).post('/api/meetings').set(host.auth)
       .send({ title: 'Design review', scheduledFor: '2026-12-01T09:30:00Z' })).body.meeting;
 

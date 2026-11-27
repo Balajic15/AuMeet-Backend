@@ -208,9 +208,9 @@ describe('data retention', () => {
     await db.collection('meeting_insights').insertMany([{ sessionId: 'a', startedAt: old }, { sessionId: 'b', startedAt: recent }]);
     await db.collection('memory_chunks').insertMany([{ sessionId: 'a', startedAt: old }, { sessionId: 'b', startedAt: recent }]);
 
-    expect(await purgeOldContent(0, new Date('2026-11-27T00:00:00Z'))).toEqual({ transcripts: 0, sessions: 0, chunks: 0 });
+    expect(await purgeOldContent(0, new Date('2026-11-27T00:00:00Z'))).toEqual({ transcripts: 0, sessions: 0, chunks: 0, recordings: 0 });
     const res = await purgeOldContent(90, new Date('2026-11-27T00:00:00Z'));
-    expect(res).toEqual({ transcripts: 1, sessions: 1, chunks: 1 });
+    expect(res).toEqual({ transcripts: 1, sessions: 1, chunks: 1, recordings: 0 });
     for (const c of ['transcripts', 'meeting_insights', 'memory_chunks']) {
       expect((await db.collection(c).find().toArray()).map((d) => d.sessionId)).toEqual(['b']);
     }

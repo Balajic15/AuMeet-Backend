@@ -34,6 +34,7 @@ import { languageName, voiceLanguage } from './language.js';
 import { ParticipantListener } from './listener.js';
 import { GREETING, chatReplyInstruction, meetingInstructions, replyInstruction, type MeetingInfo } from './prompts.js';
 import { MeetingTranscript, TranscriptSink } from './transcript.js';
+import { SharedDeviceVoices } from './voices.js';
 import { connectMongo } from './db.js';
 import { earlierSessionsBrief, historySearcher } from './memory.js';
 import { z } from 'zod';
@@ -52,6 +53,8 @@ const CAPTIONS_TOPIC = 'aumeet.captions';
 const CAPTION_THROTTLE_MS = 250;
 /** Participant attribute: 'off' = this person opted out of transcription (set in the lobby or the room). */
 const TRANSCRIBE_ATTR = 'aumeet.transcribe';
+/** Participant attribute: '1' = several people speak through this device (enables speaker separation). */
+const SHARED_ATTR = 'aumeet.shared';
 /** How long the AI stays after the last person leaves (they may just be reconnecting). */
 const EMPTY_ROOM_GRACE_MS = 60_000;
 /** Keep the model's view of the meeting bounded. */
@@ -85,6 +88,7 @@ function userIdOf(p: RemoteParticipant): string | null {
 
 const isHuman = (p: RemoteParticipant) => p.kind !== ParticipantKind.AGENT;
 const transcribeAllowed = (p: RemoteParticipant) => p.attributes?.[TRANSCRIBE_ATTR] !== 'off';
+const isSharedDevice = (p: RemoteParticipant) => p.attributes?.[SHARED_ATTR] === '1';
 const nameOf = (p: RemoteParticipant) => p.name || p.identity;
 
 export default defineAgent<ProcData>({
@@ -112,6 +116,17 @@ export default defineAgent<ProcData>({
       punctuate: true,
       keyterm: ['AuMeet'],
     });
+    // Same, plus speaker diarization – only for devices marked as shared by several people.
+    const sttShared = new deepgram.STT({
+      apiKey: cfg.DEEPGRAM_API_KEY,
+      model: 'nova-3',
+      language: 'multi',
+      smartFormat: true,
+      punctuate: true,
+      keyterm: ['AuMeet'],
+      diarize: true,
+    });
+    const voices = new SharedDeviceVoices();
     const brain = new google.LLM({ apiKey: cfg.GOOGLE_API_KEY, model: cfg.GEMINI_MODEL, temperature: 0.4 });
     const voiceOut = new cartesia.TTS({
       apiKey: cfg.CARTESIA_API_KEY,
@@ -269,19 +284,23 @@ export default defineAgent<ProcData>({
       }
     };
 
-    const onUtterance = async (p: RemoteParticipant, text: string, language: string) => {
+    const onUtterance = async (p: RemoteParticipant, text: string, language: string, voice: string | null = null) => {
       const now = Date.now();
+      // On a shared device each voice is its own speaker ("Room laptop (voice 2)" or the name they gave).
+      const who = voices.label(p.identity, nameOf(p), voice, text);
+      const speakerKey = voice === null ? p.identity : `${p.identity}#voice${voice}`;
       transcript.add({
-        speakerId: p.identity,
-        speakerName: nameOf(p),
-        userId: userIdOf(p),
+        speakerId: speakerKey,
+        speakerName: who,
+        // A voice on a shared device may not be the account holder.
+        userId: voice === null ? userIdOf(p) : null,
         isAgent: false,
         channel: 'voice',
         text,
         language,
         at: now,
       });
-      await appendToContext('user', `${nameOf(p)}: ${text}`);
+      await appendToContext('user', `${who}: ${text}`);
       analyzer.notify();
       if (language) lastLanguage = language;
 
@@ -293,20 +312,20 @@ export default defineAgent<ProcData>({
         session.generateReply({
           instructions:
             command === 'quiet'
-              ? `${nameOf(p)} asked you to stop speaking up on your own. Briefly acknowledge in ${languageName(language)} that you'll only speak when someone asks you.`
-              : `${nameOf(p)} said you may speak up again. Briefly acknowledge in ${languageName(language)} that you'll speak up when something needs attention.`,
+              ? `${who} asked you to stop speaking up on your own. Briefly acknowledge in ${languageName(language)} that you'll only speak when someone asks you.`
+              : `${who} said you may speak up again. Briefly acknowledge in ${languageName(language)} that you'll speak up when something needs attention.`,
           allowInterruptions: true,
         });
         return;
       }
 
-      const { addressed, reason } = isAddressedToAgent(text, p.identity, now, { lastAgentReplyAt, lastAddressedBy });
+      const { addressed, reason } = isAddressedToAgent(text, speakerKey, now, { lastAgentReplyAt, lastAddressedBy });
       if (!addressed || !reason) return;
 
-      lastAddressedBy = p.identity;
+      lastAddressedBy = speakerKey;
       voiceOut.updateOptions({ language: voiceLanguage(language) });
       session.generateReply({
-        instructions: replyInstruction(nameOf(p), languageName(language), reason),
+        instructions: replyInstruction(who, languageName(language), reason),
         allowInterruptions: true,
       });
     };
@@ -404,13 +423,13 @@ export default defineAgent<ProcData>({
       listeners.get(p.identity)?.close();
       listeners.set(
         p.identity,
-        new ParticipantListener(p, track, sttEngine, ctx.proc.userData.vad, {
+        new ParticipantListener(p, track, isSharedDevice(p) ? sttShared : sttEngine, ctx.proc.userData.vad, {
           onSpeechStart: () => onSpeechStart(p),
           onSpeechEnd: () => intervention.humanSpeechEnded(p.identity),
           onPartial: (text) => sendCaption(p, text, false),
-          onUtterance: (text, lang) => {
+          onUtterance: (text, lang, voice) => {
             sendCaption(p, text, true);
-            void onUtterance(p, text, lang);
+            void onUtterance(p, text, lang, voice);
           },
         }),
       );
@@ -448,10 +467,11 @@ export default defineAgent<ProcData>({
         greetOnce();
       })
       .on(RoomEvent.ParticipantAttributesChanged, (changed, p) => {
-        if (!(TRANSCRIBE_ATTR in changed) || p.identity === ctx.room.localParticipant?.identity) return;
+        if (!(TRANSCRIBE_ATTR in changed || SHARED_ATTR in changed) || p.identity === ctx.room.localParticipant?.identity) return;
         const rp = ctx.room.remoteParticipants.get(p.identity);
         if (!rp) return;
-        if (transcribeAllowed(rp)) relisten(rp);
+        if (SHARED_ATTR in changed) voices.forget(rp.identity);
+        if (transcribeAllowed(rp)) relisten(rp); // also switches diarization on/off
         else stopListening(rp.identity);
       })
       .on(RoomEvent.RoomMetadataChanged, (metadata) => applyRoomSettings(metadata))

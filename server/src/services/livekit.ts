@@ -149,8 +149,11 @@ export async function removeAgents(roomName: string): Promise<number> {
   return agents.length;
 }
 
-/** Live settings the agent reads from room metadata (e.g. proactive on/off mid-meeting). */
-export async function setRoomSettings(roomName: string, settings: { aiProactive: boolean }): Promise<void> {
+/**
+ * Live room state in room metadata: the agent reads aiProactive, every browser reads recording
+ * (to show the REC badge).
+ */
+export async function setRoomSettings(roomName: string, settings: { aiProactive: boolean; recording?: boolean }): Promise<void> {
   try {
     await rooms().updateRoomMetadata(roomName, JSON.stringify(settings));
   } catch (err) {

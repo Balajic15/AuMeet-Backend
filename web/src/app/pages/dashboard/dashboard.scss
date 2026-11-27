@@ -422,3 +422,35 @@
   line-height: 1.5;
   resize: vertical;
 }
+
+.verify-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px 12px;
+  padding: 10px 20px;
+  background: rgba(255, 176, 32, 0.1);
+  border-bottom: 1px solid rgba(255, 176, 32, 0.3);
+  color: #ffd38a;
+  font-size: 14px;
+  text-align: center;
+
+  strong {
+    color: var(--text);
+  }
+}
+
+.link-btn {
+  padding: 0;
+  background: none;
+  border: none;
+  color: var(--link);
+  font-size: 14px;
+  cursor: pointer;
+
+  &:disabled {
+    color: var(--text-muted);
+    cursor: default;
+  }
+}

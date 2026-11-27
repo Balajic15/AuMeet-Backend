@@ -59,6 +59,7 @@ export function createApp() {
   // Brute-force protection where credentials or emails are involved.
   app.use(['/api/auth/login', '/api/auth/register'], limiter(30));
   app.use('/api/auth/password', limiter(10));
+  app.use('/api/auth/email', limiter(10));
   app.use('/api/auth', authRoutes);
   // Invitations send real email.
   app.use('/api/meetings/:code/invite', limiter(20));

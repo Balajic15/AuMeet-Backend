@@ -29,6 +29,9 @@ import type { ParticipantView } from './room.service';
     }
 
     <div class="label">
+      @if (p().sharedDevice) {
+        <app-icon name="users" [size]="14" class="private-icon" title="Several people on this device" />
+      }
       @if (!p().transcribed && !p().isAgent) {
         <app-icon name="eye-off" [size]="14" class="private-icon" title="Not transcribed by the AI" />
       }

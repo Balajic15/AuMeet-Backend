@@ -69,3 +69,27 @@ describe('MeetingTranscript', () => {
     expect(t.all.map((u) => u.id)).toEqual([1, 2, 3]);
   });
 });
+
+describe('shared-device voices', async () => {
+  const { SharedDeviceVoices, selfIntroduction } = await import('../src/voices.js');
+
+  it.each([
+    ["Hi, I'm Priya and I run design", 'Priya'],
+    ['This is Ravi Kumar from sales', 'Ravi Kumar'],
+    ['my name is Mei', 'Mei'],
+    ["I'm sorry, can you repeat that", null],
+    ["I'm not sure", null],
+    ['we should ship it', null],
+  ])('selfIntroduction(%j) → %j', (text, name) => expect(selfIntroduction(text)).toBe(name));
+
+  it('labels voices on a shared device and learns names from introductions', () => {
+    const v = new SharedDeviceVoices();
+    expect(v.label('user:1', 'Asha', null, 'hello')).toBe('Asha'); // not a shared device
+    expect(v.label('room:a', 'Room A', '0', 'Morning all')).toBe('Room A (voice 1)');
+    expect(v.label('room:a', 'Room A', '1', "Hi, I'm Priya")).toBe('Priya');
+    expect(v.label('room:a', 'Room A', '1', 'I think PostgreSQL is better')).toBe('Priya');
+    expect(v.label('room:a', 'Room A', '0', 'Agreed')).toBe('Room A (voice 1)');
+    v.forget('room:a');
+    expect(v.label('room:a', 'Room A', '1', 'again')).toBe('Room A (voice 2)');
+  });
+});

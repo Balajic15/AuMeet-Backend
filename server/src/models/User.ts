@@ -9,6 +9,10 @@ const UserSchema = new Schema(
     googleId: { type: String, unique: true, sparse: true },
     githubId: { type: String, unique: true, sparse: true },
     avatarUrl: { type: String },
+    /** Proven by clicking the emailed link, signing in with Google/GitHub, or resetting the password. */
+    emailVerified: { type: Boolean, default: false },
+    verifyTokenHash: { type: String, select: false, index: { sparse: true } },
+    verifyTokenExpires: { type: Date, select: false },
     /** Bumped on password change / "sign out everywhere" – invalidates all existing sessions. */
     tokenVersion: { type: Number, default: 0 },
     /** SHA-256 of the one-time password-reset token, never the token itself. */
@@ -30,6 +34,7 @@ export function toPublicUser(user: UserDoc) {
     name: user.name,
     avatarUrl: user.avatarUrl ?? null,
     hasPassword: !!user.passwordHash,
+    emailVerified: !!user.emailVerified,
     providers: { google: !!user.googleId, github: !!user.githubId },
   };
 }

@@ -11,6 +11,8 @@ export interface MeetingSettings {
   aiProactive: boolean;
   /** Nobody new can join (except the host). */
   locked: boolean;
+  /** People wait in the lobby until the host admits them. */
+  waitingRoom: boolean;
 }
 
 export interface Meeting {
@@ -29,6 +31,17 @@ export interface Meeting {
 export interface LobbyMeeting extends Meeting {
   hostName: string;
   isHost: boolean;
+  /** The server has recording storage configured. */
+  recordingAvailable?: boolean;
+}
+
+export interface RecordingInfo {
+  id: string;
+  status: 'active' | 'complete' | 'failed';
+  startedAt: string;
+  endedAt: string | null;
+  durationSec: number | null;
+  sizeBytes: number | null;
 }
 
 export type ParticipantRole = 'host' | 'participant' | 'guest';
@@ -37,6 +50,25 @@ export interface JoinResponse {
   livekit: { url: string; token: string };
   participant: { identity: string; name: string; role: ParticipantRole };
   meeting: Meeting;
+}
+
+/** Returned instead of a token when the meeting has a waiting room. */
+export interface WaitingResponse {
+  waiting: true;
+  requestId: string;
+  secret: string;
+}
+
+export type JoinRequestStatus =
+  | { status: 'pending' }
+  | { status: 'denied' }
+  | ({ status: 'admitted' } & JoinResponse);
+
+export interface PendingJoin {
+  requestId: string;
+  name: string;
+  guest: boolean;
+  createdAt: string;
 }
 
 export interface CreateMeetingInput {
@@ -86,8 +118,44 @@ export class MeetingsService {
     return (await firstValueFrom(this.http.patch<{ meeting: Meeting }>(`/api/meetings/${code}`, input))).meeting;
   }
 
-  join(code: string, opts: { name?: string; transcribe?: boolean } = {}): Promise<JoinResponse> {
-    return firstValueFrom(this.http.post<JoinResponse>(`/api/meetings/${code}/join`, opts));
+  join(code: string, opts: { name?: string; transcribe?: boolean } = {}): Promise<JoinResponse | WaitingResponse> {
+    return firstValueFrom(this.http.post<JoinResponse | WaitingResponse>(`/api/meetings/${code}/join`, opts));
+  }
+
+  /** Waiting room: ask whether the host has let us in yet. */
+  pollJoinRequest(code: string, requestId: string, secret: string): Promise<JoinRequestStatus> {
+    return firstValueFrom(
+      this.http.get<JoinRequestStatus>(`/api/meetings/${code}/join-requests/${requestId}`, { params: { secret } }),
+    );
+  }
+
+  /** Host only. */
+  startRecording(code: string): Promise<unknown> {
+    return firstValueFrom(this.http.post(`/api/meetings/${code}/recording/start`, {}));
+  }
+
+  /** Host only. */
+  stopRecording(code: string): Promise<unknown> {
+    return firstValueFrom(this.http.post(`/api/meetings/${code}/recording/stop`, {}));
+  }
+
+  async recordings(code: string): Promise<RecordingInfo[]> {
+    return (await firstValueFrom(this.http.get<{ recordings: RecordingInfo[] }>(`/api/meetings/${code}/recordings`))).recordings;
+  }
+
+  /** Same-origin link; the server redirects to a short-lived signed URL. */
+  recordingDownloadUrl(code: string, id: string): string {
+    return `/api/meetings/${code}/recordings/${id}/download`;
+  }
+
+  /** Host only. */
+  async pendingJoins(code: string): Promise<PendingJoin[]> {
+    return (await firstValueFrom(this.http.get<{ requests: PendingJoin[] }>(`/api/meetings/${code}/join-requests`))).requests;
+  }
+
+  /** Host only. */
+  decideJoin(code: string, requestId: string, action: 'admit' | 'deny'): Promise<unknown> {
+    return firstValueFrom(this.http.post(`/api/meetings/${code}/join-requests/${requestId}`, { action }));
   }
 
   /** Host only. Emails a join link (and a calendar file for scheduled meetings). */

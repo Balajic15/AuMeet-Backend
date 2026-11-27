@@ -1,0 +1,4 @@
+# Keep LF everywhere so Docker builds from Windows checkouts behave.
+* text=auto eol=lf
+*.png binary
+*.ico binary

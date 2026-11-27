@@ -1,6 +1,7 @@
 import express, { Router } from 'express';
 import { WebhookReceiver } from 'livekit-server-sdk';
 import { MeetingModel } from '../models/Meeting.js';
+import { applyEgressInfo } from '../services/recording.js';
 import { env } from '../config/env.js';
 import { unauthorized } from '../utils/httpError.js';
 
@@ -18,6 +19,10 @@ router.post('/', express.raw({ type: '*/*' }), async (req, res) => {
     event = await receiver.receive((req.body as Buffer).toString('utf8'), req.get('Authorization'));
   } catch {
     throw unauthorized('Invalid webhook signature');
+  }
+
+  if ((event.event === 'egress_ended' || event.event === 'egress_updated') && event.egressInfo) {
+    await applyEgressInfo(event.egressInfo);
   }
 
   const roomName = event.room?.name;

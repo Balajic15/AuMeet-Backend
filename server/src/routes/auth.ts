@@ -29,6 +29,32 @@ function signIn(res: Response, user: UserDoc, status = 200) {
 
 const hashToken = (t: string) => createHash('sha256').update(t).digest('hex');
 
+const VERIFY_TTL_MS = 24 * 60 * 60 * 1000;
+
+/** Emails a one-time verification link (only the hash is stored). */
+async function sendVerification(user: UserDoc): Promise<void> {
+  const token = randomBytes(32).toString('base64url');
+  await UserModel.updateOne(
+    { _id: user._id },
+    { $set: { verifyTokenHash: hashToken(token), verifyTokenExpires: new Date(Date.now() + VERIFY_TTL_MS) } },
+  );
+  const url = `${env.WEB_URL}/verify-email?token=${token}`;
+  try {
+    await sendMail({
+      to: user.email,
+      subject: 'Confirm your email for AuMeet',
+      text: `Hi ${user.name},\n\nConfirm your email address for AuMeet (link valid for 24 hours):\n${url}`,
+      html: emailHtml(
+        'Confirm your email',
+        `<p>Hi ${escapeHtml(user.name)},</p><p>Please confirm this is your email address. The link is valid for 24 hours.</p>`,
+        { label: 'Confirm email', url },
+      ),
+    });
+  } catch (err) {
+    logger.error({ err }, 'could not send verification email');
+  }
+}
+
 // ---------- email + password ----------
 
 router.post('/register', async (req, res) => {
@@ -38,6 +64,7 @@ router.post('/register', async (req, res) => {
   const passwordHash = await bcrypt.hash(body.password, 12);
   try {
     const user = await UserModel.create({ email: body.email, name: body.name, passwordHash });
+    await sendVerification(user);
     signIn(res, user, 201);
   } catch (err) {
     if ((err as { code?: number }).code === 11000) throw conflict('An account with this email already exists');
@@ -64,6 +91,28 @@ router.post('/logout-all', requireAuth, async (req, res) => {
   await UserModel.updateOne({ _id: req.auth!.sub }, { $inc: { tokenVersion: 1 } });
   clearSession(res);
   res.json({ ok: true });
+});
+
+// ---------- email verification ----------
+
+const VerifyBody = z.object({ token: z.string().min(20).max(200) });
+
+router.post('/email/verify', async (req, res) => {
+  const { token } = VerifyBody.parse(req.body);
+  const user = await UserModel.findOneAndUpdate(
+    { verifyTokenHash: hashToken(token), verifyTokenExpires: { $gt: new Date() } },
+    { $set: { emailVerified: true }, $unset: { verifyTokenHash: 1, verifyTokenExpires: 1 } },
+    { new: true },
+  );
+  if (!user) throw badRequest('This verification link is invalid or has expired. Send a new one from your dashboard.');
+  res.json({ ok: true, email: user.email });
+});
+
+router.post('/email/resend', requireAuth, async (req, res) => {
+  const user = await UserModel.findById(req.auth!.sub);
+  if (!user) throw notFound('User no longer exists');
+  if (!user.emailVerified) await sendVerification(user);
+  res.json({ ok: true, alreadyVerified: !!user.emailVerified });
 });
 
 // ---------- profile ----------
@@ -143,6 +192,7 @@ router.post('/password/reset', async (req, res) => {
   if (!user) throw badRequest('This reset link is invalid or has expired. Request a new one.');
   user.passwordHash = await bcrypt.hash(password, 12);
   user.tokenVersion = (user.tokenVersion ?? 0) + 1; // sign out everywhere
+  user.emailVerified = true; // they received our email
   user.set('resetTokenHash', undefined);
   user.set('resetTokenExpires', undefined);
   await user.save();
@@ -238,6 +288,7 @@ router.get('/oauth/:provider/callback', async (req, res) => {
     user = await UserModel.findOne({ email: profile.email });
     if (user) {
       user.set(idField, profile.providerId);
+      user.emailVerified = true;
       if (!user.avatarUrl && profile.avatarUrl) user.avatarUrl = profile.avatarUrl;
       await user.save();
     } else {
@@ -245,6 +296,7 @@ router.get('/oauth/:provider/callback', async (req, res) => {
         email: profile.email,
         name: profile.name.slice(0, 80),
         avatarUrl: profile.avatarUrl,
+        emailVerified: true,
         [idField]: profile.providerId,
       });
     }

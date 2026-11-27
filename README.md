@@ -72,7 +72,8 @@ Caddy gets and renews a Let's Encrypt certificate automatically and serves the a
 | 🔑 | **Rotate every key** that was ever shared in chat or committed anywhere (MongoDB password, LiveKit, Gemini, Deepgram, Cartesia, Upstash). |
 | 🔑 | A long random `JWT_SECRET` (changing it signs everyone out). |
 | 🌐 | HTTPS (Caddy profile above or your own proxy). Camera, mic and secure cookies need it. |
-| ✉️ | `SMTP_URL` + `MAIL_FROM` so password reset and invitations send email. |
+| ✉️ | `SMTP_URL` + `MAIL_FROM` so password reset, email confirmation and invitations send email. Then consider `REQUIRE_EMAIL_VERIFICATION=true`. |
+| 🎥 | Recording (optional): an S3/R2/MinIO bucket in `RECORDING_S3_*`. Recordings use LiveKit Egress, which is included in LiveKit Cloud. |
 | 🔒 | MongoDB Atlas: restrict network access to your server's IP; use a database user scoped to the `aumeet` database. |
 | 🔒 | Google/GitHub OAuth apps (optional) with redirect URIs on your domain. |
 | 🗑️ | `DATA_RETENTION_DAYS` if you want old transcripts and notes deleted automatically. |
@@ -89,7 +90,8 @@ Caddy gets and renews a Let's Encrypt certificate automatically and serves the a
 - Password-reset tokens are single-use, stored hashed, and expire after 30 minutes. Account deletion
   removes hosted meeting data and anonymises the person elsewhere.
 - Privacy: anyone can opt out of AI transcription (in the lobby or the meeting). The AI then doesn't
-  process their audio or chat at all.
+  process their audio or chat at all. While a meeting is recorded, everyone sees a REC badge.
+- Hosts can use a waiting room (admit or deny each person), lock the meeting, and mute or remove people.
 
 ## Run for development
 

@@ -13,7 +13,7 @@ import {
   type InsightSession,
   type TranscriptLine,
 } from '../../core/insights';
-import type { Meeting } from '../../core/meetings.service';
+import { MeetingsService, type Meeting, type RecordingInfo } from '../../core/meetings.service';
 import { Icon } from '../../shared/icon';
 import { InsightsView } from '../../shared/insights-view';
 import { Modal } from '../../shared/modal';
@@ -36,6 +36,8 @@ export class InsightsPage {
   private readonly api = inject(InsightsService);
   private readonly title = inject(Title);
   private readonly toast = inject(ToastService);
+  private readonly meetingsApi = inject(MeetingsService);
+  protected readonly recordings = signal<RecordingInfo[]>([]);
 
   protected readonly loading = signal(true);
   protected readonly error = signal<string | null>(null);
@@ -83,6 +85,7 @@ export class InsightsPage {
       this.meeting.set(res.meeting);
       this.sessions.set(res.sessions);
       this.title.setTitle(`Notes · ${res.meeting.title} · AuMeet`);
+      void this.meetingsApi.recordings(code).then((r) => this.recordings.set(r), () => this.recordings.set([]));
       if (keepSelection && this.session()) return;
       // Prefer the newest session that actually has notes.
       const first = res.sessions.find((s) => !isEmptyInsights(s.insights)) ?? res.sessions[0];
@@ -117,6 +120,16 @@ export class InsightsPage {
 
   protected time(at: string): string {
     return new Date(at).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  }
+
+  protected recordingUrl(id: string): string {
+    return this.meetingsApi.recordingDownloadUrl(this.code(), id);
+  }
+
+  protected recordingLabel(r: RecordingInfo): string {
+    const when = new Date(r.startedAt).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
+    const mins = r.durationSec ? ` · ${Math.max(1, Math.round(r.durationSec / 60))} min` : '';
+    return when + mins;
   }
 
   // ---------- editing ----------

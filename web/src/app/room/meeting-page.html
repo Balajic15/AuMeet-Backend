@@ -25,6 +25,16 @@
     </div>
   }
 
+  <!-- ======================= Waiting room ======================= -->
+  @case ('waiting') {
+    <div class="center-page">
+      <span class="spinner big"></span>
+      <h1>Asking to join…</h1>
+      <p class="muted">You'll join <strong>{{ meeting()?.title }}</strong> as soon as the host lets you in.</p>
+      <button type="button" class="btn btn-outline narrow" (click)="cancelWaiting()">Cancel</button>
+    </div>
+  }
+
   <!-- ======================= After leaving ======================= -->
   @case ('after') {
     <div class="center-page">
@@ -62,6 +72,20 @@
         }
         @if (reconnecting()) {
           <div class="banner"><span class="spinner small"></span> Reconnecting…</div>
+        }
+        @if (pending().length) {
+          <div class="knock" role="alert">
+            @for (p of pending().slice(0, 3); track p.requestId) {
+              <div class="knock-row">
+                <span><strong>{{ p.name }}</strong>{{ p.guest ? ' (guest)' : '' }} wants to join</span>
+                <button type="button" class="btn btn-outline small" (click)="decide(p, 'deny')">Deny</button>
+                <button type="button" class="btn btn-primary small" (click)="decide(p, 'admit')">Admit</button>
+              </div>
+            }
+            @if (pending().length > 1) {
+              <button type="button" class="link-btn" (click)="decide('all', 'admit')">Admit all {{ pending().length }}</button>
+            }
+          </div>
         }
         @if (captionsOn() && rs.captions().length) {
           <app-captions [lines]="rs.captions()" />
@@ -106,11 +130,14 @@
       @if (panel(); as tab) {
         <app-side-panel [tab]="tab" (tabChange)="panel.set($event)" (closed)="panel.set(null)"
                         [isHost]="isHost()" [meeting]="meeting()" [saving]="savingSettings()"
+                        [recordingAvailable]="!!meeting()?.recordingAvailable" [recording]="rs.recording()"
+                        [recordingBusy]="recordingBusy()" (record)="toggleRecording()"
                         (setting)="changeSetting($event)" (mute)="muteParticipant($event)" (remove)="removing.set($event)" />
       }
 
       <footer class="controls">
         <div class="ctl-left">
+          @if (rs.recording()) { <span class="rec" title="This meeting is being recorded"><span class="rec-dot"></span>REC</span> }
           <span class="clock">{{ clockText() }}</span>
           <span class="divider-v"></span>
           <span class="mtitle">{{ meeting()?.title }}</span>
@@ -313,6 +340,12 @@
                   <input type="checkbox" [checked]="!transcribeMe()" (change)="transcribeMe.set(!$any($event.target).checked)" />
                   Don't transcribe me (you can change this in the meeting)
                 </label>
+                @if (transcribeMe()) {
+                  <label class="check privacy">
+                    <input type="checkbox" [checked]="sharedDevice()" (change)="sharedDevice.set($any($event.target).checked)" />
+                    Several people are using this device (e.g. a meeting room)
+                  </label>
+                }
               }
               <button type="submit" class="btn btn-primary" [disabled]="phase() === 'joining'">
                 @if (phase() === 'joining') { <span class="spinner"></span> Joining… } @else { Join now }

@@ -28,6 +28,11 @@ export const routes: Routes = [
     loadComponent: () => import('./auth/forgot-password').then((m) => m.ForgotPassword),
   },
   {
+    path: 'verify-email',
+    title: 'Confirm email · AuMeet',
+    loadComponent: () => import('./auth/verify-email').then((m) => m.VerifyEmail),
+  },
+  {
     path: 'reset-password',
     title: 'Choose a new password · AuMeet',
     loadComponent: () => import('./auth/reset-password').then((m) => m.ResetPassword),

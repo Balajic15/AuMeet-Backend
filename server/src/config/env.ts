@@ -20,6 +20,11 @@ const EnvSchema = z.object({
   GEMINI_MODEL: z.string().default('gemini-3.5-flash'),
   EMBEDDING_MODEL: z.string().default('gemini-embedding-001'),
   EMBEDDING_DIMS: z.coerce.number().int().positive().default(768),
+  // Block creating meetings / sending invites until the email address is verified.
+  REQUIRE_EMAIL_VERIFICATION: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
   // Email (password reset, invitations), e.g. smtps://user:pass@smtp.resend.com:465
   SMTP_URL: z.string().optional(),
   MAIL_FROM: z.string().default('AuMeet <no-reply@aumeet.local>'),
@@ -27,6 +32,16 @@ const EnvSchema = z.object({
   DATA_RETENTION_DAYS: z.coerce.number().int().min(0).default(0),
   // Name of an Atlas Vector Search index on memory_chunks.embedding (optional; in-app search otherwise).
   MEMORY_VECTOR_INDEX: z.string().optional(),
+  // Recording (LiveKit Egress → S3-compatible storage: AWS S3, Cloudflare R2, MinIO…). Off unless set.
+  RECORDING_S3_BUCKET: z.string().optional(),
+  RECORDING_S3_REGION: z.string().default('us-east-1'),
+  RECORDING_S3_ACCESS_KEY: z.string().optional(),
+  RECORDING_S3_SECRET: z.string().optional(),
+  RECORDING_S3_ENDPOINT: z.string().optional(),
+  RECORDING_S3_FORCE_PATH_STYLE: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
   // Must match AGENT_NAME in the agent worker (explicit dispatch).
   AGENT_NAME: z.string().default('aumeet'),
   // Where the web app lives (OAuth sends the user back here after sign-in).

@@ -3,6 +3,7 @@ import { MeetingInsightModel, TranscriptLineModel } from '../models/Insights.js'
 import { MemoryChunkModel } from '../models/MemoryChunk.js';
 import { UserModel } from '../models/User.js';
 import { closeRoom } from './livekit.js';
+import { deleteRecordings } from './recording.js';
 
 /**
  * Deletes an account and the data that belongs to it:
@@ -20,6 +21,7 @@ export async function deleteAccount(userId: string): Promise<{ meetingsDeleted: 
     TranscriptLineModel.deleteMany({ meetingCode: { $in: codes } }),
     MeetingInsightModel.deleteMany({ meetingCode: { $in: codes } }),
     MeetingModel.deleteMany({ host: userId }),
+    deleteRecordings({ meetingCode: { $in: codes } }),
   ]);
 
   // Other people's meetings: anonymise.
