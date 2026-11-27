@@ -4,6 +4,8 @@ import { z } from 'zod';
 const EnvSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().positive().default(4000),
+  // Reverse proxies in front of the API (nginx = 1; Caddy + nginx = 2). Needed for real client IPs.
+  TRUST_PROXY: z.coerce.number().int().min(0).max(5).default(1),
   CORS_ORIGINS: z.string().default('http://localhost:4200'),
   MONGODB_URI: z.string().min(1, 'MONGODB_URI is required'),
   JWT_SECRET: z.string().min(16, 'JWT_SECRET must be at least 16 characters'),

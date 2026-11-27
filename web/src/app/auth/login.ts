@@ -32,7 +32,7 @@ import { safeReturnUrl } from '../core/return-url';
       @if (step() === 'email') {
         <app-social-buttons [returnUrl]="returnUrl" (error)="error.set($event)" />
 
-        <form (ngSubmit)="continueWithEmail()" novalidate>
+        <form (submit)="$event.preventDefault(); continueWithEmail()" novalidate>
           <div class="field">
             <label for="email">Email</label>
             <input
@@ -52,7 +52,7 @@ import { safeReturnUrl } from '../core/return-url';
           <button class="btn btn-primary submit" type="submit">Sign in with email</button>
         </form>
       } @else {
-        <form (ngSubmit)="signIn()" novalidate>
+        <form (submit)="$event.preventDefault(); signIn()" novalidate>
           <div class="who">
             <span class="who-email">{{ email.value }}</span>
             <button type="button" class="link-btn" (click)="backToEmail()">Change</button>

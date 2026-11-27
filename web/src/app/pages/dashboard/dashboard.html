@@ -46,7 +46,7 @@
         }
       </div>
 
-      <form class="join" (ngSubmit)="submitJoin()" novalidate>
+      <form class="join" (submit)="$event.preventDefault(); submitJoin()" novalidate>
         <input class="input" type="text" placeholder="Enter a code or link" aria-label="Meeting code or link"
                [formControl]="joinInput" (input)="joinError.set(null)" [class.invalid]="joinError()" />
         <button type="submit" class="btn btn-outline join-btn" [disabled]="!joinInput.value.trim()">Join</button>
@@ -200,7 +200,7 @@
   @case ('invite') {
     @let m = $any(dialog()).meeting;
     <app-modal heading="Invite people" (closed)="dialog.set(null)">
-      <form (ngSubmit)="sendInvites(m)" novalidate>
+      <form (submit)="$event.preventDefault(); sendInvites(m)" novalidate>
         @if (dialogError()) { <div class="alert">{{ dialogError() }}</div> }
         <p class="dlg-text">
           They'll get an email with the link to <strong>{{ m.title }}</strong>@if (m.scheduledFor) {, plus a calendar invite}.

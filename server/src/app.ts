@@ -26,7 +26,8 @@ function limiter(limit: number) {
 export function createApp() {
   const app = express();
 
-  app.set('trust proxy', 1);
+  // Real client IPs for rate limits and logs: trust exactly the proxies in front of us.
+  app.set('trust proxy', env.TRUST_PROXY);
   app.disable('x-powered-by');
   app.use(
     pinoHttp({

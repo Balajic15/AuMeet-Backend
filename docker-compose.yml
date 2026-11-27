@@ -19,6 +19,8 @@ x-server-env: &server-env
   WEB_URL: ${PUBLIC_URL:-http://localhost:8080}
   PUBLIC_API_URL: ${PUBLIC_URL:-http://localhost:8080}
   CORS_ORIGINS: ${PUBLIC_URL:-http://localhost:8080}
+  # nginx in front of the API = 1 proxy; with the https profile Caddy adds one more (set TRUST_PROXY=2).
+  TRUST_PROXY: ${TRUST_PROXY:-1}
 
 services:
   web:

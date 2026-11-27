@@ -18,7 +18,7 @@ import { AuthService, apiErrorMessage } from '../core/auth.service';
       } @else {
         <p class="lede">Enter your account email and we'll send you a link to choose a new password.</p>
         @if (error()) { <div class="alert" role="alert">{{ error() }}</div> }
-        <form (ngSubmit)="submit()" novalidate>
+        <form (submit)="$event.preventDefault(); submit()" novalidate>
           <div class="field">
             <label for="email">Email</label>
             <input id="email" class="input" type="email" autocomplete="email" placeholder="Your email address"

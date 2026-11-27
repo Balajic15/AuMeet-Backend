@@ -17,7 +17,7 @@ import { AuthService, apiErrorMessage } from '../core/auth.service';
         @if (error()) {
           <div class="alert" role="alert">{{ error() }}</div>
         }
-        <form (ngSubmit)="submit()" novalidate>
+        <form (submit)="$event.preventDefault(); submit()" novalidate>
           <div class="field">
             <label for="password">New password</label>
             <div class="password-wrap">

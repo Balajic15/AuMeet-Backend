@@ -25,7 +25,7 @@ import { UserMenu } from '../../shared/user-menu';
         <!-- Profile -->
         <section class="card">
           <h2>Profile</h2>
-          <form (ngSubmit)="saveName()" novalidate>
+          <form (submit)="$event.preventDefault(); saveName()" novalidate>
             <div class="field">
               <label for="name">Name</label>
               <input id="name" class="input" type="text" maxlength="80" autocomplete="name" [formControl]="name"
@@ -53,7 +53,7 @@ import { UserMenu } from '../../shared/user-menu';
             <p class="hint">You sign in with {{ linked(u.providers) }}. Add a password to also sign in with your email.</p>
           }
           @if (pwError()) { <div class="alert">{{ pwError() }}</div> }
-          <form (ngSubmit)="changePassword()" novalidate>
+          <form (submit)="$event.preventDefault(); changePassword()" novalidate>
             @if (u.hasPassword) {
               <div class="field">
                 <label for="cur">Current password</label>
@@ -103,7 +103,7 @@ import { UserMenu } from '../../shared/user-menu';
         <app-modal heading="Delete your account?" (closed)="deleting.set(false)">
           @if (delError()) { <div class="alert">{{ delError() }}</div> }
           <p class="dlg-text">This can't be undone. Type <strong>{{ u.email }}</strong> to confirm.</p>
-          <form (ngSubmit)="confirmDelete()" novalidate>
+          <form (submit)="$event.preventDefault(); confirmDelete()" novalidate>
             <div class="field">
               <input class="input" type="email" autocomplete="off" [placeholder]="u.email" [formControl]="confirmEmail" />
             </div>
