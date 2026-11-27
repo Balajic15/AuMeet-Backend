@@ -127,12 +127,32 @@ export async function listParticipants(roomName: string) {
 }
 
 /** Bring the AI into a running meeting (if it isn't there already). */
-export async function dispatchAgent(roomName: string, info: AgentDispatchInfo): Promise<boolean> {
+/** Rooms we dispatched the AI to recently – it needs a few seconds to connect. */
+const recentDispatch = new Map<string, number>();
+const DISPATCH_COOLDOWN_MS = 20_000;
+
+export type DispatchResult = 'dispatched' | 'present' | 'pending' | 'no-room';
+
+/**
+ * Bring the AI into a running meeting unless it's already there or on its way. Safe to call
+ * repeatedly (never creates a second AI).
+ */
+export async function ensureAgent(roomName: string, info: AgentDispatchInfo): Promise<DispatchResult> {
   const people = await listParticipants(roomName);
-  // Room not running: the next join token dispatches the AI instead.
-  if (people.length === 0 || people.some((p) => p.kind === AGENT_KIND)) return false;
+  // Room not running yet: the first join token dispatches the AI when it creates the room.
+  if (people.length === 0) return 'no-room';
+  if (people.some((p) => p.kind === AGENT_KIND)) return 'present';
+  const last = recentDispatch.get(roomName) ?? 0;
+  if (Date.now() - last < DISPATCH_COOLDOWN_MS) return 'pending';
+  recentDispatch.set(roomName, Date.now());
   await dispatches().createDispatch(roomName, env.AGENT_NAME, { metadata: dispatchMetadata(roomName, info) });
-  return true;
+  logger.info({ roomName }, 'AI dispatched into running meeting');
+  return 'dispatched';
+}
+
+/** Host switched the AI on during the meeting. */
+export async function dispatchAgent(roomName: string, info: AgentDispatchInfo): Promise<boolean> {
+  return (await ensureAgent(roomName, info)) === 'dispatched';
 }
 
 /** Take the AI out of a running meeting. */

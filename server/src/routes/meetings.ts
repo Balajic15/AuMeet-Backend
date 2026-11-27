@@ -13,6 +13,7 @@ import {
   closeRoom,
   createParticipantToken,
   dispatchAgent,
+  ensureAgent,
   muteParticipant,
   removeAgents,
   removeParticipant,
@@ -461,6 +462,29 @@ router.delete('/:code/insights/:sessionId/:kind/:itemId', requireAuth, async (re
   if (r.modifiedCount === 0) throw notFound('Item not found');
   await MeetingInsightModel.updateOne({ _id: session._id }, editedUpdate(req.auth!.sub));
   res.json({ ok: true });
+});
+
+// ---------- make sure the AI is in the meeting ----------
+
+/**
+ * Called by the browser a few seconds after joining (and by the "Invite AI" button) when the AI
+ * hasn't appeared – e.g. the room already existed, so the join token couldn't dispatch it.
+ */
+router.post('/:code/ai/ensure', optionalAuth, async (req, res) => {
+  const meeting = await findByCode(req.params.code as string);
+  if (meeting.status === 'ended') throw gone('This meeting has ended');
+  if (!meeting.settings?.aiEnabled) {
+    res.status(409).json({ error: 'The AI participant is turned off for this meeting.', result: 'disabled' });
+    return;
+  }
+  let result;
+  try {
+    result = await ensureAgent(meeting.code, { meetingTitle: meeting.title, proactive: meeting.settings?.aiProactive ?? true });
+  } catch (err) {
+    logger.warn({ err, code: meeting.code }, 'could not dispatch AI');
+    throw badRequest('Could not invite the AI right now. Try again in a moment.');
+  }
+  res.json({ ok: true, result });
 });
 
 // ---------- recording ----------

@@ -129,6 +129,11 @@ export class MeetingsService {
     );
   }
 
+  /** Ask the server to bring the AI in if it isn't in the meeting yet (safe to repeat). */
+  ensureAi(code: string): Promise<{ result: 'dispatched' | 'present' | 'pending' | 'no-room' }> {
+    return firstValueFrom(this.http.post<{ result: 'dispatched' | 'present' | 'pending' | 'no-room' }>(`/api/meetings/${code}/ai/ensure`, {}));
+  }
+
   /** Host only. */
   startRecording(code: string): Promise<unknown> {
     return firstValueFrom(this.http.post(`/api/meetings/${code}/recording/start`, {}));

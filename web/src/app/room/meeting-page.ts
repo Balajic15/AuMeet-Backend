@@ -116,6 +116,8 @@ export class MeetingPage implements OnDestroy {
   /** Host: people waiting to be let in. */
   protected readonly pending = signal<PendingJoin[]>([]);
   protected readonly recordingBusy = signal(false);
+  protected readonly invitingAi = signal(false);
+  private aiCheckTimers: ReturnType<typeof setTimeout>[] = [];
   private waitTimer?: ReturnType<typeof setTimeout>;
   private hostPollTimer?: ReturnType<typeof setInterval>;
   private clock?: ReturnType<typeof setInterval>;
@@ -176,6 +178,7 @@ export class MeetingPage implements OnDestroy {
     clearInterval(this.clock);
     clearTimeout(this.waitTimer);
     clearInterval(this.hostPollTimer);
+    this.aiCheckTimers.forEach(clearTimeout);
   }
 
   // ---------- loading & lobby ----------
@@ -339,6 +342,30 @@ export class MeetingPage implements OnDestroy {
     this.now.set(Date.now());
     this.clock = setInterval(() => this.now.set(Date.now()), 15_000);
     if (m.isHost) this.startHostPolling();
+    // If the room already existed, the join token couldn't bring the AI in – ask the server to.
+    if (m.settings.aiEnabled) {
+      this.aiCheckTimers = [6_000, 20_000].map((ms) =>
+        setTimeout(() => {
+          if (this.phase() === 'room' && !this.rs.hasAgent() && this.meeting()?.settings.aiEnabled) {
+            void this.meetings.ensureAi(this.code()).catch(() => {});
+          }
+        }, ms),
+      );
+    }
+  }
+
+  /** "Invite AI" button (Insights panel / Host controls). */
+  protected async inviteAi(): Promise<void> {
+    if (this.invitingAi() || this.rs.hasAgent()) return;
+    this.invitingAi.set(true);
+    try {
+      const { result } = await this.meetings.ensureAi(this.code());
+      this.toast.show(result === 'present' ? 'The AI is already here' : 'Inviting the AI participant… it joins in a few seconds');
+    } catch (err) {
+      this.toast.error(apiErrorMessage(err, 'Could not invite the AI right now.'));
+    } finally {
+      setTimeout(() => this.invitingAi.set(false), 8000);
+    }
   }
 
   /** Waiting room: check every 2 s whether the host let us in. */

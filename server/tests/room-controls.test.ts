@@ -9,6 +9,7 @@ const lk = vi.hoisted(() => ({
   muteParticipant: vi.fn(async () => 1),
   removeParticipant: vi.fn(async () => {}),
   dispatchAgent: vi.fn(async () => true),
+  ensureAgent: vi.fn(async () => 'dispatched' as const),
   removeAgents: vi.fn(async () => 1),
   setRoomSettings: vi.fn(async () => {}),
   closeRoom: vi.fn(async () => {}),
@@ -42,6 +43,20 @@ async function user(email: string) {
 }
 
 describe('in-meeting controls', () => {
+  it('lets anyone in the meeting ask for the AI when it is missing, but not when AI is off', async () => {
+    const host = await user('h@test.dev');
+    const { code } = (await request(app).post('/api/meetings').set(host.auth).send({ title: 'Sync' })).body.meeting;
+
+    const guest = await request(app).post(`/api/meetings/${code}/ai/ensure`).send({});
+    expect(guest.body).toEqual({ ok: true, result: 'dispatched' });
+    expect(lk.ensureAgent).toHaveBeenCalledWith(code, { meetingTitle: 'Sync', proactive: true });
+
+    await request(app).patch(`/api/meetings/${code}`).set(host.auth).send({ settings: { aiEnabled: false } });
+    const off = await request(app).post(`/api/meetings/${code}/ai/ensure`).send({});
+    expect(off.status).toBe(409);
+    expect(off.body.result).toBe('disabled');
+  });
+
   it('puts the transcription choice and self-update permission into the join token', async () => {
     const host = await user('h@test.dev');
     const { code } = (await request(app).post('/api/meetings').set(host.auth).send({})).body.meeting;

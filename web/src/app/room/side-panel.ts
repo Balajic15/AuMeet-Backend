@@ -50,8 +50,15 @@ export type PanelTab = 'chat' | 'people' | 'insights';
           }
         } @else if (room.hasAgent()) {
           <p class="hint">AuMeet AI is listening. Decisions, tasks and open questions will appear here as the conversation develops.</p>
+        } @else if (meeting()?.settings?.aiEnabled) {
+          <div class="hint">
+            <p class="hint-p">The AI participant hasn't joined yet.</p>
+            <button type="button" class="btn btn-primary small invite" [disabled]="invitingAi()" (click)="inviteAi.emit()">
+              @if (invitingAi()) { <span class="spinner"></span> Inviting… } @else { <app-icon name="sparkles" [size]="16" /> Invite AI }
+            </button>
+          </div>
         } @else {
-          <p class="hint">The AI participant isn't in this meeting, so there are no live notes. The host can turn it on in the meeting settings.</p>
+          <p class="hint">The AI participant is turned off for this meeting.@if (isHost()) { Turn it on under People → Host controls. }</p>
         }
       </div>
     } @else if (tab() === 'chat') {
@@ -108,6 +115,11 @@ export type PanelTab = 'chat' | 'people' | 'insights';
                    (change)="setting.emit({ aiProactive: $any($event.target).checked })" />
             AI can speak up on its own
           </label>
+          @if (m.settings.aiEnabled && !room.hasAgent()) {
+            <button type="button" class="btn btn-outline small invite-host" [disabled]="invitingAi()" (click)="inviteAi.emit()">
+              <app-icon name="sparkles" [size]="16" /> {{ invitingAi() ? 'Inviting AI…' : 'Invite AI now' }}
+            </button>
+          }
           @if (recordingAvailable()) {
             <button type="button" class="btn small rec-btn" [class.btn-danger]="recording()" [class.btn-outline]="!recording()"
                     [disabled]="recordingBusy()" (click)="record.emit()">
@@ -206,6 +218,9 @@ export type PanelTab = 'chat' | 'people' | 'insights';
       input { width: 16px; height: 16px; margin: 0; accent-color: var(--brand); } }
     .switch.sub { margin-left: 24px; color: var(--text-muted); font-size: 13.5px; }
     .rec-btn { width: 100%; margin-top: 10px; gap: 8px; }
+    .invite-host { width: 100%; margin-top: 10px; gap: 8px; }
+    .invite { margin-top: 10px; gap: 8px; }
+    .hint-p { margin: 0; }
     .rec-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--danger); }
     .btn-danger .rec-dot { background: #000; }
   `,
@@ -229,6 +244,8 @@ export class SidePanel {
   readonly recording = input(false);
   readonly recordingBusy = input(false);
   readonly record = output<void>();
+  readonly invitingAi = input(false);
+  readonly inviteAi = output<void>();
 
   protected readonly draft = signal('');
   protected readonly sending = signal(false);

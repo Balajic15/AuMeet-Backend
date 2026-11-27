@@ -132,6 +132,7 @@
                         [isHost]="isHost()" [meeting]="meeting()" [saving]="savingSettings()"
                         [recordingAvailable]="!!meeting()?.recordingAvailable" [recording]="rs.recording()"
                         [recordingBusy]="recordingBusy()" (record)="toggleRecording()"
+                        [invitingAi]="invitingAi()" (inviteAi)="inviteAi()"
                         (setting)="changeSetting($event)" (mute)="muteParticipant($event)" (remove)="removing.set($event)" />
       }
 
