@@ -1,0 +1,103 @@
+# AuMeet – full stack:  docker compose up --build
+#
+#   web     → http://localhost:8080  (Angular + nginx, proxies /api to `server`)
+#   server  → REST API (internal :4000)
+#   worker  → background jobs: meeting recaps + memory (BullMQ)
+#   agent   → AI meeting participant (connects out to LiveKit Cloud)
+#   redis   → job queue
+#   caddy   → HTTPS with automatic Let's Encrypt certificates (opt-in):
+#             DOMAIN=meet.example.com PUBLIC_URL=https://meet.example.com docker compose --profile https up -d
+#
+# MongoDB Atlas and LiveKit Cloud are external: configure server/.env and agent/.env first
+# (copy the .env.example files). Values under `environment:` below override the .env files
+# so the containers find each other.
+
+x-server-env: &server-env
+  NODE_ENV: production
+  REDIS_URL: redis://redis:6379
+  # The browser reaches everything through the web container.
+  WEB_URL: ${PUBLIC_URL:-http://localhost:8080}
+  PUBLIC_API_URL: ${PUBLIC_URL:-http://localhost:8080}
+  CORS_ORIGINS: ${PUBLIC_URL:-http://localhost:8080}
+
+services:
+  web:
+    build: ./web
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    environment:
+      # Hosts the browser may connect to for media (Content-Security-Policy). Self-hosted LiveKit: set your host.
+      LIVEKIT_CSP_HOSTS: ${LIVEKIT_CSP_HOSTS:-*.livekit.cloud}
+    depends_on:
+      server:
+        condition: service_healthy
+    restart: unless-stopped
+
+  server:
+    build: ./server
+    env_file: ./server/.env
+    environment: *server-env
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  worker:
+    build: ./server
+    command: ["node", "dist/worker.js"]
+    env_file: ./server/.env
+    environment: *server-env
+    # The image's healthcheck probes the HTTP API, which the worker doesn't serve.
+    healthcheck:
+      disable: true
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  agent:
+    build: ./agent
+    env_file: ./agent/.env
+    environment:
+      NODE_ENV: production
+    restart: unless-stopped
+    # Each meeting runs in its own process; give the agent room to breathe.
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2.8-alpine
+    profiles: ["https"]
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      # Your public hostname (DNS must point here). Defaults to localhost with a local certificate.
+      DOMAIN: ${DOMAIN:-localhost}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - web
+    restart: unless-stopped
+
+volumes:
+  redis-data:
+  caddy-data:
+  caddy-config:

@@ -1,0 +1,101 @@
+/* Shared by the login and signup pages. */
+
+.submit {
+  margin-top: 10px;
+}
+
+.footer {
+  margin: 32px 0 0;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 18px;
+
+  a {
+    margin-left: 2px;
+  }
+}
+
+.who {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 24px;
+  padding: 12px 15px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 15px;
+}
+
+.who-email {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.link-btn {
+  flex: none;
+  padding: 0;
+  background: none;
+  border: none;
+  color: var(--link);
+  font-size: 15px;
+  cursor: pointer;
+
+  &:hover {
+    text-decoration: underline;
+  }
+}
+
+.password-wrap {
+  position: relative;
+
+  .input {
+    padding-right: 68px;
+  }
+}
+
+.reveal {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  transform: translateY(-50%);
+  padding: 6px 8px;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 14px;
+  cursor: pointer;
+
+  &:hover {
+    color: var(--text);
+  }
+}
+
+
+@media (max-width: 520px) {
+  .footer {
+    font-size: 16px;
+  }
+}
+
+.forgot {
+  align-self: flex-end;
+  font-size: 14px;
+}
+
+.lede {
+  margin: 0 0 24px;
+  color: var(--text-muted);
+  line-height: 1.55;
+}
+
+.success {
+  padding: 14px;
+  margin-bottom: 20px;
+  border: 1px solid rgba(61, 242, 177, 0.4);
+  background: rgba(61, 242, 177, 0.06);
+  color: var(--text);
+  font-size: 15px;
+  line-height: 1.5;
+}

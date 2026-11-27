@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="141 167 475 474" fill="none">
+  <!-- AuMeet mark: traced from aumeet-logo.png (2400x800 artboard coordinates) -->
+  <g fill="#EDF0F6">
+    <path d="M151 272A95 95 0 0 1 246 177H325A32 32 0 0 1 357 209V350A32 32 0 0 1 325 382H183A32 32 0 0 1 151 350Z"/>
+    <path d="M432 177H511A95 95 0 0 1 606 272V350A32 32 0 0 1 574 382H432A32 32 0 0 1 400 350V209A32 32 0 0 1 432 177Z"/>
+    <path d="M183 425H325A32 32 0 0 1 357 457V599A32 32 0 0 1 325 631H246A95 95 0 0 1 151 536V457A32 32 0 0 1 183 425Z"/>
+  </g>
+  <circle cx="503" cy="528" r="103" fill="#3DF2B1"/>
+  <g stroke="#0D1117" stroke-width="24" stroke-linecap="round">
+    <path d="M461 509V548M503 483V573M546 509V548"/>
+  </g>
+</svg>

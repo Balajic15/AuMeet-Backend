@@ -1,0 +1,14 @@
+# HTTPS in front of the web container. Caddy obtains and renews Let's Encrypt certificates
+# automatically for {$DOMAIN} (its DNS A/AAAA record must point at this server, ports 80+443 open).
+{$DOMAIN} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		-Server
+	}
+
+	reverse_proxy web:80 {
+		header_up X-Forwarded-Proto https
+	}
+}

@@ -1,0 +1,335 @@
+<!-- Remote audio elements are attached here by RoomService. -->
+<div #audioHost class="audio-host" aria-hidden="true"></div>
+
+@switch (phase()) {
+  <!-- ======================= Loading ======================= -->
+  @case ('loading') {
+    <div class="center-page"><span class="spinner big"></span></div>
+  }
+
+  <!-- ======================= Not found / error ======================= -->
+  @case ('notfound') {
+    <div class="center-page">
+      <img src="aumeet-mark.svg" alt="" width="56" height="56" />
+      <h1>Meeting not found</h1>
+      <p class="muted">Check the code or link and try again. Codes look like <code>abc-defg-hij</code>.</p>
+      <button type="button" class="btn btn-primary narrow" (click)="goHome()">Return to home</button>
+    </div>
+  }
+  @case ('error') {
+    <div class="center-page">
+      <img src="aumeet-mark.svg" alt="" width="56" height="56" />
+      <h1>Something went wrong</h1>
+      <p class="muted">{{ errorText() }}</p>
+      <button type="button" class="btn btn-primary narrow" (click)="rejoin()">Try again</button>
+    </div>
+  }
+
+  <!-- ======================= After leaving ======================= -->
+  @case ('after') {
+    <div class="center-page">
+      <img src="aumeet-mark.svg" alt="" width="56" height="56" />
+      @switch (rs.endReason()) {
+        @case ('ended') { <h1>This meeting has ended</h1> <p class="muted">The host ended the meeting for everyone.</p> }
+        @case ('removed') { <h1>You were removed from the meeting</h1> }
+        @case ('lost') { <h1>You lost connection</h1> <p class="muted">Check your network and rejoin.</p> }
+        @default { <h1>You left the meeting</h1> }
+      }
+      <div class="after-actions">
+        @if (rs.endReason() !== 'ended' && rs.endReason() !== 'removed') {
+          <button type="button" class="btn btn-outline" (click)="rejoin()">Rejoin</button>
+        }
+        @if (auth.isAuthenticated() && meeting()?.settings?.aiEnabled) {
+          <a class="btn btn-outline" [routerLink]="['/', code(), 'insights']">
+            <app-icon name="sparkles" [size]="18" /> Meeting notes
+          </a>
+        }
+        <button type="button" class="btn btn-primary" (click)="goHome()">
+          {{ auth.isAuthenticated() ? 'Return to home' : 'Sign in to AuMeet' }}
+        </button>
+      </div>
+    </div>
+  }
+
+  <!-- ======================= Room ======================= -->
+  @case ('room') {
+    <div class="room" [class.with-panel]="panel()">
+      <div class="stage">
+        @if (rs.audioBlocked()) {
+          <button type="button" class="banner action" (click)="rs.startAudio()">
+            <app-icon name="mic" [size]="16" /> Click to enable meeting audio
+          </button>
+        }
+        @if (reconnecting()) {
+          <div class="banner"><span class="spinner small"></span> Reconnecting…</div>
+        }
+        @if (captionsOn() && rs.captions().length) {
+          <app-captions [lines]="rs.captions()" />
+        }
+        <app-reaction-overlay [items]="rs.reactions()" />
+
+        @if (rs.screenShare(); as presenter) {
+          <div class="present">
+            <div class="screen">
+              <app-video-track [track]="presenter.screen!" fit="contain" />
+              <div class="screen-label">
+                <app-icon name="monitor" [size]="14" />
+                {{ presenter.isLocal ? 'You are presenting' : presenter.name + ' is presenting' }}
+                @if (presenter.isLocal) {
+                  <button type="button" class="stop-share" (click)="toggleScreen()">Stop presenting</button>
+                }
+              </div>
+            </div>
+            <div class="strip">
+              @for (p of tiles(); track p.identity) {
+                <app-participant-tile [p]="p" />
+              }
+            </div>
+          </div>
+        } @else {
+          <div class="grid" [style.--cols]="cols()" [class.solo]="tiles().length === 1">
+            @for (p of tiles(); track p.identity) {
+              <app-participant-tile [p]="p" />
+            }
+          </div>
+          @if (tiles().length === 1) {
+            <div class="alone">
+              <p>You're the only one here</p>
+              <button type="button" class="btn btn-outline small" (click)="copyLink()">
+                <app-icon name="copy" [size]="16" /> Copy invite link
+              </button>
+            </div>
+          }
+        }
+      </div>
+
+      @if (panel(); as tab) {
+        <app-side-panel [tab]="tab" (tabChange)="panel.set($event)" (closed)="panel.set(null)"
+                        [isHost]="isHost()" [meeting]="meeting()" [saving]="savingSettings()"
+                        (setting)="changeSetting($event)" (mute)="muteParticipant($event)" (remove)="removing.set($event)" />
+      }
+
+      <footer class="controls">
+        <div class="ctl-left">
+          <span class="clock">{{ clockText() }}</span>
+          <span class="divider-v"></span>
+          <span class="mtitle">{{ meeting()?.title }}</span>
+        </div>
+
+        <div class="ctl-center">
+          <button type="button" class="ctl" [class.off]="!rs.micOn()" (click)="toggleMic()"
+                  [attr.aria-label]="rs.micOn() ? 'Turn off microphone' : 'Turn on microphone'"
+                  [title]="(rs.micOn() ? 'Turn off microphone' : 'Turn on microphone') + ' (Ctrl+D)'">
+            <app-icon [name]="rs.micOn() ? 'mic' : 'mic-off'" />
+          </button>
+          <button type="button" class="ctl" [class.off]="!rs.camOn()" (click)="toggleCam()"
+                  [attr.aria-label]="rs.camOn() ? 'Turn off camera' : 'Turn on camera'"
+                  [title]="(rs.camOn() ? 'Turn off camera' : 'Turn on camera') + ' (Ctrl+E)'">
+            <app-icon [name]="rs.camOn() ? 'video' : 'video-off'" />
+          </button>
+          <button type="button" class="ctl" [class.on]="rs.screenOn()" (click)="toggleScreen()"
+                  [attr.aria-label]="rs.screenOn() ? 'Stop presenting' : 'Present your screen'"
+                  [title]="rs.screenOn() ? 'Stop presenting' : 'Present your screen'">
+            <app-icon [name]="rs.screenOn() ? 'monitor-off' : 'monitor'" />
+          </button>
+          <button type="button" class="ctl" [class.on]="rs.handRaised()" (click)="toggleHand()"
+                  [attr.aria-label]="rs.handRaised() ? 'Lower hand' : 'Raise hand'" [title]="rs.handRaised() ? 'Lower hand' : 'Raise hand'">
+            <app-icon name="hand" />
+          </button>
+          <div class="react-wrap">
+            <button type="button" class="ctl" [class.on]="reactOpen()" (click)="reactOpen.set(!reactOpen())"
+                    aria-label="Send a reaction" title="Send a reaction" aria-haspopup="menu">
+              <app-icon name="smile" />
+            </button>
+            @if (reactOpen()) { <app-reaction-picker class="react-pop" (picked)="react($event)" /> }
+          </div>
+          <button type="button" class="ctl hide-sm" [class.on]="captionsOn()" (click)="setCaptions(!captionsOn())"
+                  [attr.aria-label]="captionsOn() ? 'Turn off captions' : 'Turn on captions'"
+                  [title]="rs.hasAgent() ? (captionsOn() ? 'Turn off captions' : 'Turn on captions') : 'Captions need the AI participant'">
+            <app-icon name="captions" />
+          </button>
+          <button type="button" class="ctl leave" (click)="onLeaveClick()" aria-label="Leave call" title="Leave call">
+            <app-icon name="phone-off" />
+          </button>
+        </div>
+
+        <div class="ctl-right">
+          <button type="button" class="ctl ghost" [class.on]="settingsOpen()" (click)="settingsOpen.set(true)"
+                  aria-label="Settings" title="Settings">
+            <app-icon name="settings" />
+          </button>
+          <button type="button" class="ctl ghost" [class.on]="panel() === 'insights'" (click)="togglePanel('insights')"
+                  aria-label="Meeting insights" title="Meeting insights">
+            <app-icon name="sparkles" />
+            @if (needsConfirmation() > 0) {
+              <span class="pill warn" [title]="needsConfirmation() + ' decision(s) need confirmation'">{{ needsConfirmation() }}</span>
+            }
+          </button>
+          <button type="button" class="ctl ghost" [class.on]="panel() === 'people'" (click)="togglePanel('people')"
+                  aria-label="People" title="People">
+            <app-icon name="users" />
+            <span class="pill">{{ tiles().length }}</span>
+          </button>
+          <button type="button" class="ctl ghost" [class.on]="panel() === 'chat'" (click)="togglePanel('chat')"
+                  aria-label="Chat" title="Chat">
+            <app-icon name="message" />
+            @if (rs.unread() > 0) { <span class="pill dot">{{ rs.unread() }}</span> }
+          </button>
+        </div>
+      </footer>
+    </div>
+
+    @if (settingsOpen()) {
+      <app-settings-dialog [captionsOn]="captionsOn()" [aiPresent]="rs.hasAgent()"
+                           (captionsChange)="setCaptions($event)" (closed)="settingsOpen.set(false)" />
+    }
+
+    @if (removing(); as p) {
+      <app-modal [heading]="p.isAgent ? 'Remove the AI participant?' : 'Remove ' + p.name + '?'" (closed)="removing.set(null)">
+        <p class="dlg-text">
+          @if (p.isAgent) {
+            The AI will leave and stop taking notes. You can bring it back from Host controls.
+          } @else {
+            {{ p.name }} will be disconnected. They can rejoin with the link unless you lock the meeting.
+          }
+        </p>
+        <div class="dlg-actions">
+          <button type="button" class="btn btn-outline" (click)="removing.set(null)">Cancel</button>
+          <button type="button" class="btn btn-danger" (click)="confirmRemove()">Remove</button>
+        </div>
+      </app-modal>
+    }
+
+    @if (leaveDialog()) {
+      <app-modal heading="Leave the meeting?" (closed)="leaveDialog.set(false)">
+        <p class="dlg-text">You're the host. You can leave and let others continue, or end the meeting for everyone.</p>
+        <div class="dlg-actions">
+          <button type="button" class="btn btn-outline" (click)="leave()">Just leave</button>
+          <button type="button" class="btn btn-danger" [disabled]="ending()" (click)="endForAll()">
+            @if (ending()) { <span class="spinner"></span> } End for everyone
+          </button>
+        </div>
+      </app-modal>
+    }
+  }
+
+  <!-- ======================= Lobby (also shown while joining) ======================= -->
+  @default {
+    <header class="topbar">
+      <a [routerLink]="auth.isAuthenticated() ? '/' : '/login'"><img src="aumeet-logo.png" alt="AuMeet" class="wordmark" /></a>
+      @if (auth.isAuthenticated()) {
+        <app-user-menu />
+      } @else {
+        <a class="btn btn-outline small" routerLink="/login" [queryParams]="{ returnUrl: '/' + code() }">Sign in</a>
+      }
+    </header>
+
+    <main class="lobby">
+      <section class="preview-col">
+        <div class="preview">
+          @if (previewVideo(); as v) {
+            <app-video-track [track]="v" [mirror]="true" />
+          } @else {
+            <div class="preview-off">
+              <span>{{ camError() || 'Camera is off' }}</span>
+            </div>
+          }
+          <div class="preview-name">{{ displayName() }}</div>
+          <div class="preview-ctls">
+            <button type="button" class="ctl" [class.off]="!micOn()" (click)="lobbyToggleMic()"
+                    [attr.aria-label]="micOn() ? 'Turn off microphone' : 'Turn on microphone'">
+              <app-icon [name]="micOn() ? 'mic' : 'mic-off'" />
+            </button>
+            <button type="button" class="ctl" [class.off]="!camOn()" (click)="lobbyToggleCam()"
+                    [attr.aria-label]="camOn() ? 'Turn off camera' : 'Turn on camera'">
+              <app-icon [name]="camOn() ? 'video' : 'video-off'" />
+            </button>
+          </div>
+        </div>
+        @if (micError()) { <p class="field-error dev-err">{{ micError() }}</p> }
+        @if (lobbyMics().length || lobbyCams().length) {
+          <div class="devices">
+            @if (lobbyMics().length) {
+              <label class="device">
+                <app-icon name="mic" [size]="16" />
+                <select class="input" aria-label="Microphone" [value]="devicePrefs().audioinput ?? 'default'"
+                        (change)="pickLobbyDevice('audioinput', $any($event.target).value)">
+                  @for (d of lobbyMics(); track d.deviceId) { <option [value]="d.deviceId">{{ d.label || 'Microphone' }}</option> }
+                </select>
+              </label>
+            }
+            @if (lobbyCams().length) {
+              <label class="device">
+                <app-icon name="video" [size]="16" />
+                <select class="input" aria-label="Camera" [value]="devicePrefs().videoinput ?? lobbyCams()[0]?.deviceId"
+                        (change)="pickLobbyDevice('videoinput', $any($event.target).value)">
+                  @for (d of lobbyCams(); track d.deviceId) { <option [value]="d.deviceId">{{ d.label || 'Camera' }}</option> }
+                </select>
+              </label>
+            }
+          </div>
+        }
+      </section>
+
+      <section class="join-col">
+        @if (meeting(); as m) {
+          <h1>{{ m.title }}</h1>
+          <p class="host-line">
+            Hosted by {{ m.isHost ? 'you' : m.hostName }}
+            @if (m.status === 'live') { <span class="live-chip"><span class="live-dot"></span> In progress</span> }
+          </p>
+
+          @if (m.settings.aiEnabled) {
+            <div class="ai-note">
+              <span class="pav-ai"><span></span><span></span><span></span></span>
+              <span>
+                The AuMeet AI participant will join this meeting to follow the discussion and track decisions and tasks.
+                @if (m.settings.aiProactive !== false) {
+                  It may speak up to confirm an unclear decision or ask who owns a task. Say “AuMeet, stay quiet” any time.
+                } @else {
+                  It only speaks when someone says “AuMeet”.
+                }
+              </span>
+            </div>
+          }
+
+          @if (joinError()) { <div class="alert" role="alert">{{ joinError() }}</div> }
+
+          @if (needsSignIn()) {
+            <p class="muted">The host only allows people with an AuMeet account to join.</p>
+            <a class="btn btn-primary" routerLink="/login" [queryParams]="{ returnUrl: '/' + code() }">Sign in to join</a>
+          } @else {
+            <form (submit)="$event.preventDefault(); join()" novalidate>
+              @if (isGuest()) {
+                <div class="field">
+                  <label for="guest-name">Your name</label>
+                  <input #guestInput id="guest-name" class="input" type="text" maxlength="80" autocomplete="name"
+                         placeholder="What should we call you?" [value]="guestName()"
+                         (input)="guestName.set($any($event.target).value); joinError.set(null)" />
+                </div>
+              }
+              @if (m.settings.aiEnabled) {
+                <label class="check privacy">
+                  <input type="checkbox" [checked]="!transcribeMe()" (change)="transcribeMe.set(!$any($event.target).checked)" />
+                  Don't transcribe me (you can change this in the meeting)
+                </label>
+              }
+              <button type="submit" class="btn btn-primary" [disabled]="phase() === 'joining'">
+                @if (phase() === 'joining') { <span class="spinner"></span> Joining… } @else { Join now }
+              </button>
+            </form>
+            @if (isGuest()) {
+              <p class="muted small-print">
+                Have an account? <a routerLink="/login" [queryParams]="{ returnUrl: '/' + code() }">Sign in</a>
+              </p>
+            }
+          }
+
+          <button type="button" class="copy-link" (click)="copyLink()">
+            <app-icon name="link" [size]="16" /> {{ code() }} · Copy invite link
+          </button>
+        }
+      </section>
+    </main>
+  }
+}

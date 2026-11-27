@@ -1,0 +1,179 @@
+<header class="topbar">
+  <a routerLink="/"><img src="aumeet-logo.png" alt="AuMeet" class="wordmark" /></a>
+  <app-user-menu />
+</header>
+
+<main class="wrap">
+  <a routerLink="/" class="back"><app-icon name="arrow-left" [size]="16" /> All meetings</a>
+
+  @if (loading()) {
+    <div class="center"><span class="spinner"></span></div>
+  } @else if (error()) {
+    <div class="center">
+      <p>{{ error() }}</p>
+      <a routerLink="/" class="btn btn-outline small">Back to meetings</a>
+    </div>
+  } @else if (meeting(); as m) {
+    <div class="head">
+      <div>
+        <p class="eyebrow"><app-icon name="sparkles" [size]="14" /> Meeting notes</p>
+        <h1>{{ m.title }}</h1>
+        <p class="meta">
+          <span class="code">{{ m.code }}</span>
+          @if (session(); as s) {
+            <span class="sep">·</span> {{ when(s) }}
+            @if (s.participants.length) { <span class="sep">·</span> {{ s.participants.join(', ') }} }
+            @if (!s.endedAt) { <span class="live">In progress</span> }
+          }
+        </p>
+      </div>
+      @if (sessions().length > 1) {
+        <label class="picker">
+          <span>Session</span>
+          <select class="input" [value]="selected()" (change)="select($any($event.target).value)">
+            @for (s of sessions(); track s.sessionId) {
+              <option [value]="s.sessionId">{{ when(s) }}</option>
+            }
+          </select>
+        </label>
+      }
+    </div>
+
+    @if (session(); as s) {
+      <div class="tabs" role="tablist">
+        <button type="button" role="tab" [class.active]="view() === 'notes'" (click)="view.set('notes')">Notes</button>
+        <button type="button" role="tab" [class.active]="view() === 'transcript'" (click)="view.set('transcript')">
+          Transcript <span class="count">{{ lines().length }}</span>
+        </button>
+        @if (lines().length) {
+          <a class="download" [href]="downloadUrl()" download>
+            <app-icon name="download" [size]="16" /> Download .txt
+          </a>
+        }
+      </div>
+    }
+
+    @if (view() === 'transcript') {
+      <div class="panel">
+        @if (lines().length === 0) {
+          <p class="none">No transcript for this session.</p>
+        } @else {
+          <ol class="transcript">
+            @for (l of lines(); track l.seq) {
+              <li [class.ai]="l.isAgent">
+                <span class="t-time">{{ time(l.at) }}</span>
+                <span class="t-who">{{ l.isAgent ? 'AuMeet AI' : l.speakerName }}@if (l.channel === 'chat') { <em> (chat)</em> }</span>
+                <span class="t-text">{{ l.text }}</span>
+              </li>
+            }
+          </ol>
+        }
+      </div>
+    } @else {
+      @if (session()?.recap; as r) {
+        <section class="recap">
+          <p class="recap-label">Recap</p>
+          <h2>{{ r.headline }}</h2>
+          <p class="overview">{{ r.overview }}</p>
+          <div class="recap-cols">
+            @if (r.highlights.length) {
+              <div>
+                <h3>Highlights</h3>
+                <ul>@for (h of r.highlights; track $index) { <li>{{ h }}</li> }</ul>
+              </div>
+            }
+            @if (r.nextSteps.length) {
+              <div>
+                <h3>Next steps</h3>
+                <ul>@for (n of r.nextSteps; track $index) { <li>{{ n }}</li> }</ul>
+              </div>
+            }
+          </div>
+        </section>
+      } @else if (session()?.endedAt && !isEmpty(session()!.insights)) {
+        <p class="recap-pending"><span class="spinner small"></span> Writing the recap… it appears here a few minutes after the meeting ends.</p>
+      }
+
+      @if (!session() || isEmpty(session()!.insights)) {
+        <div class="empty">
+          <app-icon name="sparkles" [size]="28" />
+          <p class="empty-title">No notes yet</p>
+          <p>
+            @if (m.settings.aiEnabled) {
+              Notes appear once the AI participant has heard some discussion in this meeting.
+            } @else {
+              The AI participant is turned off for this meeting, so nothing was recorded.
+            }
+          </p>
+        </div>
+      } @else {
+        @if (editable()) {
+          <p class="edit-hint"><app-icon name="edit" [size]="14" /> Spot a mistake? Edit or delete any item. The recap updates automatically.</p>
+        }
+        <div class="panel">
+          <app-insights-view [insights]="session()!.insights!" [lines]="lines()" [editable]="editable()"
+                             (editDecision)="openDecision($event)" (editTask)="openTask($event)"
+                             (deleteItem)="deleteItem($event)" />
+        </div>
+      }
+    }
+  }
+</main>
+
+@if (editingDecision()) {
+  <app-modal heading="Edit decision" (closed)="editingDecision.set(null)">
+    <form (ngSubmit)="saveDecision()">
+      <div class="field">
+        <label for="d-statement">Decision</label>
+        <textarea id="d-statement" class="input area" rows="3" name="statement" maxlength="500"
+                  [(ngModel)]="decisionDraft.statement"></textarea>
+      </div>
+      <div class="field">
+        <label for="d-status">Status</label>
+        <select id="d-status" class="input" name="status" [(ngModel)]="decisionDraft.status">
+          @for (o of statuses; track o.value) { <option [value]="o.value">{{ o.label }}</option> }
+        </select>
+      </div>
+      <div class="dlg-actions">
+        <button type="button" class="btn btn-outline" (click)="editingDecision.set(null)">Cancel</button>
+        <button type="submit" class="btn btn-primary" [disabled]="saving() || !decisionDraft.statement.trim()">
+          @if (saving()) { <span class="spinner"></span> } Save
+        </button>
+      </div>
+    </form>
+  </app-modal>
+}
+
+@if (editingTask()) {
+  <app-modal heading="Edit task" (closed)="editingTask.set(null)">
+    <form (ngSubmit)="saveTask()">
+      <div class="field">
+        <label for="t-task">Task</label>
+        <textarea id="t-task" class="input area" rows="2" name="task" maxlength="500" [(ngModel)]="taskDraft.task"></textarea>
+      </div>
+      <div class="field">
+        <label for="t-owner">Owner</label>
+        <input id="t-owner" class="input" name="owner" list="people" maxlength="80" placeholder="Who is doing it?"
+               [(ngModel)]="taskDraft.owner" />
+        <datalist id="people">
+          @for (p of session()?.participants ?? []; track p) { <option [value]="p"></option> }
+        </datalist>
+      </div>
+      <div class="field">
+        <label for="t-due">Due date</label>
+        <input id="t-due" class="input" type="date" name="dueDate" [(ngModel)]="taskDraft.dueDate" />
+      </div>
+      <label class="check">
+        <input type="checkbox" name="done" [ngModel]="taskDraft.status === 'done'"
+               (ngModelChange)="taskDraft.status = $event ? 'done' : 'open'" />
+        Done
+      </label>
+      <div class="dlg-actions">
+        <button type="button" class="btn btn-outline" (click)="editingTask.set(null)">Cancel</button>
+        <button type="submit" class="btn btn-primary" [disabled]="saving() || !taskDraft.task.trim()">
+          @if (saving()) { <span class="spinner"></span> } Save
+        </button>
+      </div>
+    </form>
+  </app-modal>
+}

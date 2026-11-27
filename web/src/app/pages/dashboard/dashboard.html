@@ -1,0 +1,284 @@
+<header class="topbar">
+  <img src="aumeet-logo.png" alt="AuMeet" class="wordmark" />
+  <app-user-menu />
+</header>
+
+<main class="wrap">
+  <!-- ======= Start / join ======= -->
+  <section class="hero">
+    <h1>Meetings with an AI<br />that actually listens.</h1>
+    <p class="lede">
+      Start a call, share the link, and AuMeet's AI participant keeps track of what was decided,
+      what's still open, and who's doing what.
+    </p>
+
+    <div class="start">
+      <div class="new-wrap">
+        <button type="button" class="btn btn-primary new-btn" [disabled]="busy()"
+                (click)="newMenuOpen.set(!newMenuOpen())" aria-haspopup="menu" [attr.aria-expanded]="newMenuOpen()">
+          @if (busy() && !dialog()) { <span class="spinner"></span> } @else { <app-icon name="plus" /> }
+          New meeting
+        </button>
+        @if (newMenuOpen()) {
+          <div class="menu new-menu" role="menu">
+            <button type="button" role="menuitem" (click)="startInstant()">
+              <app-icon name="video" /> Start an instant meeting
+            </button>
+            <button type="button" role="menuitem" (click)="createForLater()">
+              <app-icon name="link" /> Create a meeting for later
+            </button>
+            <button type="button" role="menuitem" (click)="openSchedule()">
+              <app-icon name="calendar" /> Schedule a meeting
+            </button>
+          </div>
+        }
+      </div>
+
+      <form class="join" (ngSubmit)="submitJoin()" novalidate>
+        <input class="input" type="text" placeholder="Enter a code or link" aria-label="Meeting code or link"
+               [formControl]="joinInput" (input)="joinError.set(null)" [class.invalid]="joinError()" />
+        <button type="submit" class="btn btn-outline join-btn" [disabled]="!joinInput.value.trim()">Join</button>
+      </form>
+    </div>
+    @if (joinError()) {
+      <p class="field-error join-error">{{ joinError() }}</p>
+    }
+
+    @if (overview()?.askEnabled) {
+      <app-ask-box />
+    }
+  </section>
+
+  <!-- ======= Meetings list ======= -->
+  <section class="panel" aria-label="Your meetings">
+    <div class="tabs" role="tablist">
+      <button type="button" role="tab" [attr.aria-selected]="tab() === 'upcoming'" [class.active]="tab() === 'upcoming'"
+              (click)="tab.set('upcoming')">
+        Upcoming <span class="count">{{ upcoming().length }}</span>
+      </button>
+      <button type="button" role="tab" [attr.aria-selected]="tab() === 'recent'" [class.active]="tab() === 'recent'"
+              (click)="tab.set('recent')">
+        Recent <span class="count">{{ recent().length }}</span>
+      </button>
+      <button type="button" role="tab" [attr.aria-selected]="tab() === 'tasks'" [class.active]="tab() === 'tasks'"
+              (click)="tab.set('tasks'); loadOverview()">
+        My tasks <span class="count">{{ openTaskCount() }}</span>
+      </button>
+    </div>
+
+    @if (tab() === 'tasks') {
+      <app-my-tasks [tasks]="overview()?.tasks ?? []" [decisions]="overview()?.openDecisions ?? []"
+                    (changed)="onTaskChanged($event)" />
+    } @else if (loading()) {
+      <div class="rows">
+        @for (i of [1, 2, 3]; track i) {
+          <div class="row skeleton"><div class="sk-date"></div><div class="sk-lines"><div></div><div></div></div></div>
+        }
+      </div>
+    } @else if (loadError()) {
+      <div class="empty">
+        <p>{{ loadError() }}</p>
+        <button type="button" class="btn btn-outline small" (click)="load()">Try again</button>
+      </div>
+    } @else if (visible().length === 0) {
+      <div class="empty">
+        <app-icon [name]="tab() === 'upcoming' ? 'calendar' : 'inbox'" [size]="28" />
+        @if (tab() === 'upcoming') {
+          <p class="empty-title">Nothing scheduled</p>
+          <p>Schedule a meeting and it will show up here.</p>
+          <button type="button" class="btn btn-outline small" (click)="openSchedule()">Schedule a meeting</button>
+        } @else {
+          <p class="empty-title">No meetings yet</p>
+          <p>Meetings you host or join will appear here.</p>
+        }
+      </div>
+    } @else {
+      <ul class="rows">
+        @for (m of visible(); track m.id) {
+          @let d = dateParts(m);
+          <li class="row" [class.ended]="m.status === 'ended'">
+            <div class="date" [class.live]="m.status === 'live'">
+              @if (m.status === 'live') {
+                <span class="live-dot"></span><span class="date-label">Live</span>
+              } @else {
+                <span class="date-label">{{ d.label }}</span>
+                <span class="date-day">{{ d.day }}</span>
+                <span class="date-month">{{ d.month }}</span>
+              }
+            </div>
+
+            <div class="info">
+              <div class="title">{{ m.title }}</div>
+              <div class="meta">
+                <span>{{ d.time }}</span>
+                <span class="sep">·</span>
+                <span class="code">{{ m.code }}</span>
+                @if (isHost(m)) { <span class="badge">Host</span> }
+                @if (m.status === 'ended') { <span class="badge muted">Ended</span> }
+                @if (m.settings.aiEnabled) {
+                  <span class="badge ai" title="AI participant on"><app-icon name="sparkles" [size]="12" /> AI</span>
+                }
+              </div>
+            </div>
+
+            <div class="actions">
+              @if (m.settings.aiEnabled || m.status === 'ended') {
+                <a class="icon-btn" [routerLink]="['/', m.code, 'insights']" title="Meeting notes" aria-label="Meeting notes">
+                  <app-icon name="sparkles" [size]="18" />
+                </a>
+              }
+              @if (m.status !== 'ended') {
+                <button type="button" class="btn btn-primary small" (click)="join(m)">
+                  {{ m.status === 'live' ? 'Rejoin' : 'Join' }}
+                </button>
+                <button type="button" class="icon-btn" title="Copy invite link" aria-label="Copy invite link"
+                        (click)="copyLink(m)">
+                  <app-icon name="copy" [size]="18" />
+                </button>
+              }
+              @if (isHost(m) && m.status !== 'ended') {
+                <div class="row-menu-wrap">
+                  <button type="button" class="icon-btn" aria-label="More options" aria-haspopup="menu"
+                          [attr.aria-expanded]="rowMenu() === m.id"
+                          (click)="rowMenu.set(rowMenu() === m.id ? null : m.id)">
+                    <app-icon name="more" [size]="18" />
+                  </button>
+                  @if (rowMenu() === m.id) {
+                    <div class="menu row-menu" role="menu">
+                      <button type="button" role="menuitem" (click)="openInvite(m)">
+                        <app-icon name="mail" [size]="18" /> Invite by email
+                      </button>
+                      <button type="button" role="menuitem" (click)="openSettings(m)">
+                        <app-icon name="edit" [size]="18" /> Edit meeting
+                      </button>
+                      <button type="button" role="menuitem" class="danger" (click)="confirmEnd(m)">
+                        <app-icon name="circle-stop" [size]="18" /> End meeting
+                      </button>
+                    </div>
+                  }
+                </div>
+              }
+            </div>
+          </li>
+        }
+      </ul>
+    }
+  </section>
+</main>
+
+<!-- ======= Dialogs ======= -->
+@switch (dialog()?.kind) {
+  @case ('link') {
+    @let m = $any(dialog()).meeting;
+    <app-modal heading="Here's your meeting link" (closed)="dialog.set(null)">
+      <p class="dlg-text">Share this link with the people you want in the meeting. Save it so you can use it later, too.</p>
+      <div class="link-box">
+        <span class="link-text">{{ link(m) }}</span>
+        <button type="button" class="icon-btn" aria-label="Copy link" (click)="copyLink(m)">
+          <app-icon name="copy" [size]="18" />
+        </button>
+      </div>
+      <div class="dlg-actions">
+        <button type="button" class="btn btn-outline" (click)="openInvite(m)"><app-icon name="mail" [size]="16" /> Invite by email</button>
+        <button type="button" class="btn btn-primary" (click)="join(m)">Join now</button>
+      </div>
+    </app-modal>
+  }
+
+  @case ('invite') {
+    @let m = $any(dialog()).meeting;
+    <app-modal heading="Invite people" (closed)="dialog.set(null)">
+      <form (ngSubmit)="sendInvites(m)" novalidate>
+        @if (dialogError()) { <div class="alert">{{ dialogError() }}</div> }
+        <p class="dlg-text">
+          They'll get an email with the link to <strong>{{ m.title }}</strong>@if (m.scheduledFor) {, plus a calendar invite}.
+        </p>
+        <div class="field">
+          <label for="i-emails">Email addresses</label>
+          <textarea id="i-emails" class="input area" rows="3" placeholder="priya@company.com, ravi@company.com"
+                    [formControl]="inviteEmails"></textarea>
+        </div>
+        <div class="field">
+          <label for="i-msg">Message <span class="opt">(optional)</span></label>
+          <textarea id="i-msg" class="input area" rows="2" maxlength="500" [formControl]="inviteMessage"></textarea>
+        </div>
+        <div class="dlg-actions">
+          <button type="button" class="btn btn-outline" (click)="dialog.set(null)">Cancel</button>
+          <button type="submit" class="btn btn-primary" [disabled]="busy() || !inviteEmails.value.trim()">
+            @if (busy()) { <span class="spinner"></span> } Send
+          </button>
+        </div>
+      </form>
+    </app-modal>
+  }
+
+  @case ('schedule') {
+    <app-modal heading="Schedule a meeting" (closed)="dialog.set(null)">
+      <form [formGroup]="scheduleForm" (ngSubmit)="submitSchedule()" novalidate>
+        @if (dialogError()) { <div class="alert">{{ dialogError() }}</div> }
+        <div class="field">
+          <label for="s-title">Title</label>
+          <input id="s-title" class="input" type="text" placeholder="e.g. Sprint planning" formControlName="title"
+                 [class.invalid]="scheduleForm.controls.title.touched && scheduleForm.controls.title.invalid" />
+        </div>
+        <div class="field">
+          <label for="s-when">Date &amp; time</label>
+          <input id="s-when" class="input" type="datetime-local" formControlName="when" />
+        </div>
+        <label class="check"><input type="checkbox" formControlName="aiEnabled" /> AI participant joins the meeting</label>
+        <label class="check sub"><input type="checkbox" formControlName="aiProactive" /> AI can speak up on its own (e.g. to confirm decisions)</label>
+        <label class="check"><input type="checkbox" formControlName="allowGuests" /> Allow guests without an account</label>
+        <div class="dlg-actions">
+          <button type="button" class="btn btn-outline" (click)="dialog.set(null)">Cancel</button>
+          <button type="submit" class="btn btn-primary" [disabled]="busy()">
+            @if (busy()) { <span class="spinner"></span> } Schedule
+          </button>
+        </div>
+      </form>
+    </app-modal>
+  }
+
+  @case ('settings') {
+    @let m = $any(dialog()).meeting;
+    <app-modal heading="Edit meeting" (closed)="dialog.set(null)">
+      <form [formGroup]="settingsForm" (ngSubmit)="submitSettings(m)" novalidate>
+        @if (dialogError()) { <div class="alert">{{ dialogError() }}</div> }
+        <div class="field">
+          <label for="e-title">Title</label>
+          <input id="e-title" class="input" type="text" formControlName="title"
+                 [class.invalid]="settingsForm.controls.title.touched && settingsForm.controls.title.invalid" />
+        </div>
+        <div class="field">
+          <label for="e-when">Date &amp; time <span class="opt">(optional)</span></label>
+          <input id="e-when" class="input" type="datetime-local" formControlName="when" />
+        </div>
+        <label class="check"><input type="checkbox" formControlName="aiEnabled" /> AI participant joins the meeting</label>
+        <label class="check sub"><input type="checkbox" formControlName="aiProactive" /> AI can speak up on its own (e.g. to confirm decisions)</label>
+        <label class="check"><input type="checkbox" formControlName="allowGuests" /> Allow guests without an account</label>
+        <div class="dlg-actions">
+          <button type="button" class="btn btn-outline" (click)="dialog.set(null)">Cancel</button>
+          <button type="submit" class="btn btn-primary" [disabled]="busy()">
+            @if (busy()) { <span class="spinner"></span> } Save
+          </button>
+        </div>
+      </form>
+    </app-modal>
+  }
+
+  @case ('end') {
+    @let m = $any(dialog()).meeting;
+    <app-modal heading="End this meeting?" (closed)="dialog.set(null)">
+      @if (dialogError()) { <div class="alert">{{ dialogError() }}</div> }
+      <p class="dlg-text">
+        Everyone in <strong>{{ m.title }}</strong> will be disconnected and the link will stop working.
+        This can't be undone.
+      </p>
+      <div class="dlg-actions">
+        <button type="button" class="btn btn-outline" (click)="dialog.set(null)">Cancel</button>
+        <button type="button" class="btn btn-danger" [disabled]="busy()" (click)="endMeeting(m)">
+          @if (busy()) { <span class="spinner"></span> } End for everyone
+        </button>
+      </div>
+    </app-modal>
+  }
+}

@@ -1,0 +1,61 @@
+# Rendered by the nginx image at start-up (envsubst on ${VARS} that exist in the environment).
+# Only LIVEKIT_CSP_HOSTS is substituted; nginx's own $variables are left alone.
+
+server {
+  listen 80;
+  server_name _;
+  root /usr/share/nginx/html;
+  server_tokens off;
+
+  # ---- security headers (app pages) ----
+  # Camera/mic/screen only for this site; strict CSP (styles need 'unsafe-inline' for Angular component styles).
+  set $csp "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob: https:; media-src 'self' blob:; connect-src 'self' wss://${LIVEKIT_CSP_HOSTS} https://${LIVEKIT_CSP_HOSTS}; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'";
+  add_header Content-Security-Policy $csp always;
+  add_header Permissions-Policy "camera=(self), microphone=(self), display-capture=(self), speaker-selection=(self), geolocation=()" always;
+  add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+  add_header X-Content-Type-Options "nosniff" always;
+  add_header X-Frame-Options "DENY" always;
+
+  # API (incl. OAuth redirects and the LiveKit webhook) → the server container.
+  location /api/ {
+    proxy_pass http://server:4000;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Request-Id $request_id;
+    proxy_read_timeout 60s;
+    client_max_body_size 1m;
+  }
+
+  # Angular's JS/CSS file names contain a content hash, so they can be cached forever.
+  location ~* \.(?:js|css|woff2?)$ {
+    try_files $uri =404;
+    expires 1y;
+    add_header Cache-Control "public, immutable";
+    add_header X-Content-Type-Options "nosniff" always;
+  }
+
+  # Logo/favicon keep their names when changed – cache briefly.
+  location ~* \.(?:png|svg|ico)$ {
+    try_files $uri =404;
+    expires 1d;
+    add_header X-Content-Type-Options "nosniff" always;
+  }
+
+  # Client-side routes (/login, /abc-defg-hij, …) all serve the app shell; never cache it.
+  # (add_header in a location replaces the server-level ones, so the security headers are repeated.)
+  location / {
+    try_files $uri $uri/ /index.html;
+    add_header Cache-Control "no-cache";
+    add_header Content-Security-Policy $csp always;
+    add_header Permissions-Policy "camera=(self), microphone=(self), display-capture=(self), speaker-selection=(self), geolocation=()" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+  }
+
+  gzip on;
+  gzip_types text/css application/javascript application/json image/svg+xml;
+}
