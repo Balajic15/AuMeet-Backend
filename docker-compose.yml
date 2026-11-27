@@ -21,6 +21,9 @@ x-server-env: &server-env
   CORS_ORIGINS: ${PUBLIC_URL:-http://localhost:8080}
   # nginx in front of the API = 1 proxy; with the https profile Caddy adds one more (set TRUST_PROXY=2).
   TRUST_PROXY: ${TRUST_PROXY:-1}
+  # The live site always uses this agent name, so a dev agent (AGENT_NAME=aumeet-dev in local
+  # .env files) on the same LiveKit project can never take production meetings.
+  AGENT_NAME: ${PROD_AGENT_NAME:-aumeet}
 
 services:
   web:
@@ -62,6 +65,7 @@ services:
     env_file: ./agent/.env
     environment:
       NODE_ENV: production
+      AGENT_NAME: ${PROD_AGENT_NAME:-aumeet}
     restart: unless-stopped
     # Each meeting runs in its own process; give the agent room to breathe.
     deploy:
