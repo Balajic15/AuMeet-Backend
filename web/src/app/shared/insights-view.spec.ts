@@ -114,7 +114,7 @@ describe('InsightsView – goal and agenda', () => {
       ...notes,
       copilot: {
         currentFocus: 'Holiday plans', offTopic: true, offTopicNote: 'drifted to holidays', missingInfo: ['Owner for the schema'],
-        suggestedQuestions: ['Who drafts the schema?'], discussNext: 'Back to the database choice', agendaAdvice: '', updatedAt: '',
+        suggestedQuestions: ['Who drafts the schema?'], suggestions: [{ key: 'q', kind: 'question', text: 'Who drafts the schema?', why: '', relevance: 0.9, relatedItems: [] }], discussNext: 'Back to the database choice', agendaAdvice: '', updatedAt: '',
       },
       risks: [{
         id: 'r1', kind: 'conflict', description: 'Asha commits to Friday but the API arrives Monday', involves: ['Asha', 'Ben'], relatedItems: [],
