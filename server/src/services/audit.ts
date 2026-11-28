@@ -94,6 +94,7 @@ const ACTIONS: Record<string, string> = {
   'PATCH /api/meetings/:code/insights/:sessionId/speakers': 'transcript.speaker_corrected',
   'POST /api/meetings/:code/insights/:sessionId/actions/plan': 'followthrough.planned',
   'PATCH /api/meetings/:code/insights/:sessionId/actions/:actionId': 'followthrough.action_decided',
+  'POST /api/meetings/:code/insights/:sessionId/actions/:actionId/retry': 'followthrough.action_retried',
   'PATCH /api/memory/tasks/:sessionId/:taskId': 'task.status_changed',
   'PUT /api/ai/behaviour': 'ai.behaviour_changed',
   'PUT /api/ai/follow-through': 'followthrough.settings_changed',
@@ -105,6 +106,10 @@ const ACTIONS: Record<string, string> = {
   'PUT /api/ai/feedback/policy': 'learning.policy_changed',
   'DELETE /api/ai/feedback': 'learning.forgotten',
   'DELETE /api/ai/learning': 'learning.reactions_forgotten',
+  'POST /api/integrations/:provider/connect': 'integration.connected',
+  'PUT /api/integrations/:provider/config': 'integration.configured',
+  'PATCH /api/integrations/:provider': 'integration.switched',
+  'DELETE /api/integrations/:provider': 'integration.disconnected',
 };
 
 /** Body keys whose VALUES are safe and useful to keep (statuses, switches); other keys are listed by name only. */

@@ -35,6 +35,15 @@ const FollowActionSchema = new Schema(
     reason: { type: String, default: '' },
     /** Dedupes automatic actions, e.g. "overdue:<session>:<task>". */
     dedupeKey: { type: String, index: { unique: true, sparse: true } },
+    /** How it was (or will be) carried out: gmail, smtp, google_calendar, ics, jira, linear, asana, webhook. */
+    channel: String,
+    /** Execution attempts so far, and when the next retry is due after a temporary failure. */
+    attempts: { type: Number, default: 0 },
+    nextAttemptAt: Date,
+    /** Recipients already reached (user ids): a retry never emails someone twice. */
+    sentTo: { type: [String], default: [] },
+    /** Issue created in the project tool (idempotency + later status updates). */
+    external: { type: Schema.Types.Mixed },
     decidedBy: String,
     decidedAt: Date,
     executedAt: Date,

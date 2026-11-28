@@ -59,8 +59,16 @@ const KIND_LABEL: Record<FollowAction['kind'], string> = {
             <p class="title">{{ a.title }}</p>
             @if (a.body) { <p class="body">{{ a.body }}</p> }
             @if (a.reason) { <p class="reason">Why: {{ a.reason }}</p> }
-            @if (a.error) { <p class="err">{{ a.error }}</p> }
-            @if (a.result) { <p class="reason">{{ a.result }}</p> }
+            @if (a.error) {
+              <p class="err">{{ a.error }}@if (a.status === 'approved' && a.nextAttemptAt) { · retrying {{ when(a.nextAttemptAt) }} (attempt {{ a.attempts + 1 }}) }</p>
+            }
+            @if (a.result) {
+              <p class="reason">{{ a.result }}@if (a.channel) { · via {{ channelLabel(a.channel) }} }</p>
+            }
+            @if (a.external; as x) { <p class="reason"><a [href]="x.url" target="_blank" rel="noopener">Open {{ x.key }} in {{ channelLabel(x.provider) }}</a></p> }
+            @if (a.status === 'failed') {
+              <div class="btns"><button type="button" class="btn btn-outline small" [disabled]="busy()" (click)="retry(a)">Try again</button></div>
+            }
             @if (a.status === 'proposed' || (a.status === 'approved' && !a.executedAt)) {
               <div class="btns">
                 @if (a.status === 'proposed') {
@@ -185,6 +193,28 @@ export class FollowThroughPanel {
       else if (r.action.status === 'failed') this.toast.error(r.action.error ?? 'It could not be carried out.');
     } catch (err) {
       this.toast.error(apiErrorMessage(err, 'Could not update the action.'));
+    } finally {
+      this.busy.set(false);
+    }
+  }
+
+  protected channelLabel(c: string): string {
+    const names: Record<string, string> = {
+      gmail: 'your Gmail', smtp: 'AuMeet email', google_calendar: 'Google Calendar', ics: 'calendar invite email',
+      jira: 'Jira', linear: 'Linear', asana: 'Asana', webhook: 'webhook',
+    };
+    return c.split('+').map((x) => names[x] ?? x).join(' + ');
+  }
+
+  protected async retry(a: FollowAction): Promise<void> {
+    this.busy.set(true);
+    try {
+      const r = await this.api.retryAction(this.code(), this.sessionId(), a.id);
+      this.actions.update((xs) => xs.map((x) => (x.id === a.id ? r.action : x)));
+      if (r.action.status === 'done') this.toast.show(r.action.result ?? 'Done');
+      else if (r.action.status === 'failed') this.toast.error(r.action.error ?? 'It failed again.');
+    } catch (err) {
+      this.toast.error(apiErrorMessage(err, 'Could not retry.'));
     } finally {
       this.busy.set(false);
     }

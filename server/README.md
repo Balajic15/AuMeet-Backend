@@ -82,6 +82,28 @@ webhook everything still works; meeting status just stays `idle` until the host 
 - **Ask your meetings** now also gets a structured status ledger (tasks with owners and due dates, decision statuses,
   open risks), so "who owns X" and "what is pending" are answered from facts, not only from similar text.
 
+## Integrations (Account → Integrations)
+
+Approved follow-ups are carried out in the host's own services; without them AuMeet falls back to its own email
+(SMTP), `.ics` invitations and the webhook.
+
+| Service | How it connects | What AuMeet does |
+|---|---|---|
+| Gmail + Google Calendar | OAuth with the same `GOOGLE_CLIENT_ID` as sign-in, scopes `gmail.send` + `calendar.events`. Add the redirect URI `<PUBLIC_API_URL>/api/integrations/google/callback` to the OAuth client. | Sends follow-up emails from the host's Gmail; creates one calendar event per follow-up meeting with the attendees invited (`sendUpdates=all`). Can't read mail or other events. |
+| Jira | Site (`<name>.atlassian.net`) + Atlassian email + API token | Creates an issue in the chosen project; moves it to Done / back to To Do when the task changes in AuMeet. |
+| Linear | Personal API key | Creates an issue in the chosen team; completes / reopens it. |
+| Asana | Personal access token | Creates a task in the chosen project; completes / reopens it. |
+
+- Credentials are encrypted with AES-256-GCM (`INTEGRATIONS_KEY`) and never returned by the API. Disconnecting Google
+  also revokes the grant at Google. Only the providers' own API hosts are called.
+- One project tool is active at a time.
+- Execution is idempotent and retried: recipients already reached are never emailed again, calendar events have a fixed
+  id, an issue is created once (its id is stored on the action and the task). Rate limits, outages and network errors
+  are retried with exponential backoff (1 min … 6 h) up to `maxAttempts` (follow-through settings, default 5);
+  refusals (bad token, missing project) fail at once. Hosts can retry a failed action. Every step is in the audit log.
+- Google: `gmail.send` is a sensitive scope. Until the OAuth app is verified by Google, people outside your Google
+  Cloud project's test users see an "unverified app" warning (or are blocked in production mode).
+
 ## Background worker & meeting memory
 
 ```bash

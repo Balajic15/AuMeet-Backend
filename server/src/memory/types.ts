@@ -23,6 +23,8 @@ export interface StoredActionItem {
   deadline: string | null;
   dueDate: string | null;
   status: 'open' | 'done';
+  /** Issue created in Jira / Linear / Asana for this task. */
+  external?: { provider: 'jira' | 'linear' | 'asana'; id: string; key: string; url: string } | null;
   evidence?: number[];
   firstSeenAt?: string;
   updatedAt?: string;

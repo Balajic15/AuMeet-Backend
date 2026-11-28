@@ -7,6 +7,7 @@ import { AiService, behaviourDiff, type Behaviour, type LearningStat } from '../
 import { BehaviourEditor } from '../../shared/behaviour-editor';
 import { FollowThroughSettingsCard } from './follow-through-settings';
 import { NotesLearning } from './notes-learning';
+import { IntegrationsCard } from './integrations-card';
 import { Modal } from '../../shared/modal';
 import { ToastService } from '../../shared/toast';
 import { UserMenu } from '../../shared/user-menu';
@@ -14,7 +15,7 @@ import { UserMenu } from '../../shared/user-menu';
 @Component({
   selector: 'app-account-page',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [ReactiveFormsModule, RouterLink, Icon, Modal, UserMenu, BehaviourEditor, NotesLearning, FollowThroughSettingsCard],
+  imports: [ReactiveFormsModule, RouterLink, Icon, Modal, UserMenu, BehaviourEditor, NotesLearning, FollowThroughSettingsCard, IntegrationsCard],
   template: `
     <header class="topbar">
       <a routerLink="/"><img src="aumeet-logo.png" alt="AuMeet" class="wordmark" /></a>
@@ -81,6 +82,7 @@ import { UserMenu } from '../../shared/user-menu';
         </section>
 
         <section class="card"><app-notes-learning /></section>
+        <section class="card"><app-integrations-card /></section>
         <section class="card"><app-follow-through-settings /></section>
 
         <!-- Password -->

@@ -183,6 +183,11 @@ export interface FollowAction {
   reason: string;
   result: string | null;
   error: string | null;
+  /** gmail, smtp, google_calendar, ics, jira, linear, asana, webhook */
+  channel: string | null;
+  attempts: number;
+  nextAttemptAt: string | null;
+  external: { provider: string; key: string; url: string } | null;
   executedAt: string | null;
   createdAt: string | null;
 }
@@ -279,6 +284,10 @@ export class InsightsService {
     body: { status?: 'approved' | 'dismissed'; title?: string; body?: string; when?: string },
   ): Promise<{ action: FollowAction }> {
     return firstValueFrom(this.http.patch<{ action: FollowAction }>(`${this.base(code, sessionId)}/actions/${encodeURIComponent(id)}`, body));
+  }
+
+  retryAction(code: string, sessionId: string, id: string): Promise<{ action: FollowAction }> {
+    return firstValueFrom(this.http.post<{ action: FollowAction }>(`${this.base(code, sessionId)}/actions/${encodeURIComponent(id)}/retry`, {}));
   }
 
   sessionMetrics(sessionId: string): Promise<{ metrics: SessionMetrics }> {

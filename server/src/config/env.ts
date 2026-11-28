@@ -63,6 +63,9 @@ const EnvSchema = z.object({
   // Optional: each provider is enabled only when its credentials are set.
   GOOGLE_CLIENT_ID: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),
+  // Encrypts integration credentials at rest (Gmail/Calendar, Jira, Linear, Asana). 32+ random characters.
+  // Falls back to a key derived from JWT_SECRET.
+  INTEGRATIONS_KEY: z.string().min(32).optional(),
   GITHUB_CLIENT_ID: z.string().optional(),
   GITHUB_CLIENT_SECRET: z.string().optional(),
 });

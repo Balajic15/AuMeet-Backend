@@ -37,7 +37,7 @@ import { recordCorrections, type CorrectionKind } from '../services/feedback.js'
 import { canSeeSession, presentDuring } from '../memory/access.js';
 import { audit, auditForMeeting } from '../services/audit.js';
 import { FollowActionModel, type FollowAction } from '../models/FollowAction.js';
-import { executeAction, planFollowThrough, publicAction, reportTaskProgress } from '../services/followThrough.js';
+import { executeAction, planFollowThrough, publicAction, reportTaskProgress, retryAction } from '../services/followThrough.js';
 
 const router = Router();
 
@@ -605,6 +605,7 @@ router.patch('/:code/insights/:sessionId/tasks/:itemId', requireAuth, async (req
   if (body.status && before && body.status !== before['status']) {
     void reportTaskProgress(meeting.code, session.sessionId, {
       id: before.id, task: body.task ?? String(before['task']), owner: (before['owner'] as string | null) ?? null, dueDate: (before['dueDate'] as string | null) ?? null,
+      external: (before['external'] as never) ?? null,
     }, body.status);
   }
   res.json({ ok: true });
@@ -683,6 +684,15 @@ router.patch('/:code/insights/:sessionId/actions/:actionId', requireAuth, async 
     await executeAction(String(action._id));
   }
   const fresh = await FollowActionModel.findById(action._id).lean();
+  res.json({ action: publicAction(fresh as FollowAction) });
+});
+
+// Try a failed follow-up again (already reached recipients and created issues are not repeated).
+router.post('/:code/insights/:sessionId/actions/:actionId/retry', requireAuth, async (req, res) => {
+  const { session } = await hostSession(req);
+  if (!(await retryAction(String(req.params.actionId), session.sessionId))) throw conflict('Only a failed action can be retried');
+  await executeAction(String(req.params.actionId));
+  const fresh = await FollowActionModel.findById(String(req.params.actionId)).lean();
   res.json({ action: publicAction(fresh as FollowAction) });
 });
 

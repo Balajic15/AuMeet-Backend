@@ -14,6 +14,9 @@ import { MeetingInsightModel } from '../models/Insights.js';
 import { MeetingModel } from '../models/Meeting.js';
 import { UserModel } from '../models/User.js';
 import { buildIcs } from '../utils/ics.js';
+import { IntegrationError } from '../integrations/errors.js';
+import { createCalendarEvent, googleReady, sendGmail } from '../integrations/google.js';
+import { activeProjectTool, createIssue, setIssueDone, type ExternalIssue } from '../integrations/projectTools.js';
 import { emailHtml, escapeHtml, mailConfigured, sendMail } from './mailer.js';
 import type { SessionDoc, StoredActionItem } from '../memory/types.js';
 
@@ -39,8 +42,10 @@ export const FollowThroughSettings = z.object({
   overdueNotices: z.boolean(),
   /** Project tool webhook (HTTPS). Tasks and progress are POSTed here as JSON. */
   webhookUrl: z.string().trim().url().max(500).nullable(),
-  /** Push new tasks to the webhook without asking each time. */
+  /** Push new tasks to the project tool / webhook without asking each time. */
   autoSyncTasks: z.boolean(),
+  /** Temporary failures (rate limits, outages) are retried this many times in total. */
+  maxAttempts: z.number().int().min(1).max(20),
 });
 export type FollowThroughSettings = z.infer<typeof FollowThroughSettings>;
 
@@ -51,6 +56,7 @@ export const FOLLOW_THROUGH_DEFAULTS: FollowThroughSettings = {
   overdueNotices: true,
   webhookUrl: null,
   autoSyncTasks: false,
+  maxAttempts: 5,
 };
 
 export async function followThroughSettings(hostId: string): Promise<FollowThroughSettings> {
@@ -270,7 +276,7 @@ export async function planFollowThrough(sessionId: string, ai: AiClient, now = n
       durationMinutes: allDay ? 30 : Math.min(480, Math.max(15, ev.durationMinutes || 30)), reason: ev.reason.trim(),
     });
   }
-  if (settings.webhookUrl) {
+  if (settings.webhookUrl || (await activeProjectTool(hostId))) {
     for (const t of tasks.values()) {
       if (t.status !== 'open') continue;
       docs.push({
@@ -385,44 +391,107 @@ async function postWebhook(url: string, payload: unknown, hostId: string): Promi
   return `webhook ${status}`;
 }
 
-/** Carry out one approved action. Returns what happened (stored on the action). */
+/** A temporary failure worth retrying (rate limit, outage, network), as opposed to a refusal. */
+function isRetryable(err: unknown): boolean {
+  if (err instanceof IntegrationError) return err.retryable;
+  return /timed? ?out|ECONNRESET|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|socket hang up|answered (429|5\d\d)/i.test(String((err as Error)?.message ?? err));
+}
+
+/** Backoff: 1, 2, 4, 8 … minutes, at most 6 hours. */
+const backoffMs = (attempt: number) => Math.min(6 * 3_600_000, 60_000 * 2 ** Math.max(0, attempt - 1));
+
+interface Recipient {
+  userId?: string | null;
+  name?: string | null;
+  email?: string | null;
+}
+
+/**
+ * Carry out one approved action. Uses the host's connected services first (Gmail, Google Calendar, Jira / Linear /
+ * Asana) and falls back to the server's mail and calendar files and the webhook. Each step is idempotent: recipients
+ * already reached are skipped, a calendar event has a fixed id, an issue is created once. Temporary failures are
+ * retried with backoff up to maxAttempts; refusals fail immediately.
+ */
 export async function executeAction(id: string, now = new Date()): Promise<FollowAction | null> {
-  // Claim it so two workers never send twice.
+  // Claim it so two workers never run it at the same time.
   const a = (await FollowActionModel.findOneAndUpdate(
     { _id: id, status: 'approved', executedAt: { $exists: false } },
-    { $set: { executedAt: now } },
+    { $set: { executedAt: now }, $inc: { attempts: 1 } },
     { returnDocument: 'after' },
-  ).lean()) as FollowAction | null;
+  ).lean()) as (FollowAction & { attempts?: number; sentTo?: string[]; external?: ExternalIssue | null }) | null;
   if (!a) return null;
 
-  const finish = (set: Record<string, unknown>) =>
-    FollowActionModel.findByIdAndUpdate(a._id, { $set: set }, { returnDocument: 'after' }).lean() as Promise<FollowAction | null>;
+  const finish = (set: Record<string, unknown>, unset: Record<string, 1> = {}) =>
+    FollowActionModel.findByIdAndUpdate(a._id, { $set: set, ...(Object.keys(unset).length ? { $unset: unset } : {}) }, { returnDocument: 'after' }).lean() as Promise<FollowAction | null>;
+  const settings = await followThroughSettings(a.hostId);
+  const sentTo = new Set(a.sentTo ?? []);
+  const markSent = (r: Recipient) => FollowActionModel.updateOne({ _id: a._id }, { $addToSet: { sentTo: r.userId ?? r.email ?? '' } });
+  const reached = (r: Recipient) => sentTo.has(r.userId ?? r.email ?? '');
+
   try {
     const link = meetingLink(a.meetingCode);
     if (a.kind === 'reminder') {
       const task = await taskOf(a);
       if (task && task.status === 'done') return finish({ status: 'done', result: 'Not sent: the task is already done' });
     }
-    if (a.kind === 'task_sync') {
-      const settings = await followThroughSettings(a.hostId);
-      if (!settings.webhookUrl) return finish({ status: 'failed', error: 'No project tool webhook is set' });
-      const task = await taskOf(a);
-      const result = await postWebhook(settings.webhookUrl, {
-        event: 'task.created',
-        meeting: { code: a.meetingCode, link },
-        task: task
-          ? { id: task.id, title: task.task, owner: task.owner, dueDate: task.dueDate, status: task.status }
-          : { id: a.taskId, title: a.title, status: 'open' },
-      }, a.hostId);
-      return finish({ status: 'done', result });
-    }
-    if (!mailConfigured()) return finish({ status: 'failed', error: 'Email is not configured on the server' });
 
-    let sent = 0;
-    for (const r of a.recipients ?? []) {
-      if (!r.email) continue;
-      if (a.kind === 'calendar' && a.when) {
-        const minutes = a.durationMinutes ?? 30;
+    if (a.kind === 'task_sync') {
+      const task = await taskOf(a);
+      const tool = await activeProjectTool(a.hostId);
+      const results: string[] = [];
+      let external = a.external ?? null;
+      if (tool && !external) {
+        external = await createIssue(a.hostId, tool, {
+          title: task?.task ?? a.title,
+          description: [a.body, `From the meeting notes: ${link}`].filter(Boolean).join('\n\n'),
+          dueDate: task?.dueDate ?? null,
+        });
+        // Remember it right away: a retry must not create a second issue.
+        await FollowActionModel.updateOne({ _id: a._id }, { $set: { external } });
+        if (a.taskId) {
+          await MeetingInsightModel.updateOne(
+            { sessionId: a.sessionId, 'insights.actionItems.id': a.taskId },
+            { $set: { 'insights.actionItems.$.external': external } },
+          );
+        }
+      }
+      if (external) results.push(`${external.provider} ${external.key}`);
+      if (settings.webhookUrl) {
+        results.push(
+          await postWebhook(settings.webhookUrl, {
+            event: 'task.created',
+            meeting: { code: a.meetingCode, link },
+            task: task
+              ? { id: task.id, title: task.task, owner: task.owner, dueDate: task.dueDate, status: task.status, external }
+              : { id: a.taskId, title: a.title, status: 'open', external },
+          }, a.hostId),
+        );
+      }
+      if (!results.length) return finish({ status: 'failed', error: 'No project tool is connected' });
+      return finish({ status: 'done', channel: [external?.provider, settings.webhookUrl ? 'webhook' : ''].filter(Boolean).join('+'), result: `Created: ${results.join(', ')}`, ...(external ? { result: `Created ${external.key}: ${external.url}` } : {}) }, { error: 1, nextAttemptAt: 1 });
+    }
+
+    const recipients = (a.recipients ?? []) as Recipient[];
+    const useGoogle = await googleReady(a.hostId);
+    const host = useGoogle ? await UserModel.findById(a.hostId).select({ name: 1 }).lean() : null;
+
+    if (a.kind === 'calendar' && a.when) {
+      const minutes = a.durationMinutes ?? 30;
+      if (useGoogle) {
+        // One event in the host's calendar; Google sends the invitations. The fixed id makes retries harmless.
+        const ev = await createCalendarEvent(a.hostId, {
+          eventId: `aumeet${String(a._id)}`,
+          title: a.title,
+          description: `${a.body}\n\nMeeting notes: ${link}`,
+          start: new Date(a.when),
+          minutes,
+          attendees: recipients.map((r) => r.email).filter((e): e is string => !!e),
+        });
+        return finish({ status: 'done', channel: 'google_calendar', result: `Event created in Google Calendar${ev.link ? `: ${ev.link}` : ''}` }, { error: 1, nextAttemptAt: 1 });
+      }
+      if (!mailConfigured()) return finish({ status: 'failed', error: 'Connect Google Calendar or configure email on the server' });
+      for (const r of recipients) {
+        if (!r.email || reached(r)) continue;
         const gcal = googleCalendarLink(a.title, new Date(a.when), minutes, `${a.body}\n\n${link}`);
         const ics = buildIcs({ uid: `${String(a._id)}@aumeet`, title: a.title, start: new Date(a.when), durationMinutes: minutes, url: link, description: a.body });
         const ok = await sendMail({
@@ -437,31 +506,58 @@ export async function executeAction(id: string, now = new Date()): Promise<Follo
           ),
           attachments: [{ filename: 'invite.ics', content: ics, contentType: 'text/calendar; charset=utf-8; method=PUBLISH' }],
         });
-        if (ok) sent++;
-      } else {
-        const ok = await sendMail({
-          to: r.email,
-          subject: a.title,
-          text: `${a.body}\n\n${link}`,
-          html: emailHtml(a.title, `<p style="margin:0;white-space:pre-line">${escapeHtml(a.body)}</p>`, { label: 'Open the meeting notes', url: link }),
-        });
-        if (ok) sent++;
+        if (ok) await markSent(r);
+      }
+      return finishSent('ics');
+    }
+
+    // Emails go from the host's own Gmail when connected; reminders and nudges come from AuMeet's address
+    // when the server has one (they are notifications, not personal messages).
+    const viaGmail = useGoogle && (a.kind === 'email' || !mailConfigured());
+    if (!viaGmail && !mailConfigured()) return finish({ status: 'failed', error: 'Connect Gmail or configure email on the server' });
+    for (const r of recipients) {
+      if (!r.email || reached(r)) continue;
+      const text = `${a.body}\n\n${link}`;
+      const html = emailHtml(a.title, `<p style="margin:0;white-space:pre-line">${escapeHtml(a.body)}</p>`, { label: 'Open the meeting notes', url: link });
+      if (viaGmail) {
+        await sendGmail(a.hostId, { fromName: host?.name, to: r.email, subject: a.title, text, html });
+        await markSent(r);
+      } else if (await sendMail({ to: r.email, subject: a.title, text, html })) {
+        await markSent(r);
       }
     }
-    return finish(sent ? { status: 'done', result: `Sent to ${sent} ${sent === 1 ? 'person' : 'people'}` } : { status: 'failed', error: 'Nothing could be sent' });
+    return finishSent(viaGmail ? 'gmail' : 'smtp');
+
+    async function finishSent(channel: string) {
+      const fresh = await FollowActionModel.findById(a!._id).select({ sentTo: 1 }).lean();
+      const n = (fresh?.sentTo ?? []).length;
+      return n
+        ? finish({ status: 'done', channel, result: `Sent to ${n} ${n === 1 ? 'person' : 'people'}${channel === 'gmail' ? ' from your Gmail' : ''}` }, { error: 1, nextAttemptAt: 1 })
+        : finish({ status: 'failed', channel, error: 'Nothing could be sent' });
+    }
   } catch (err) {
+    const message = String((err as Error).message ?? err).slice(0, 300);
+    const attempts = a.attempts ?? 1;
+    if (isRetryable(err) && attempts < settings.maxAttempts) {
+      // Back in the queue; executedAt is cleared so the sweep can claim it again later.
+      logger.info({ action: String(a._id), attempts, err: message }, 'follow-through action will be retried');
+      return finish({ status: 'approved', error: message, nextAttemptAt: new Date(now.getTime() + backoffMs(attempts)) }, { executedAt: 1 });
+    }
     logger.warn({ err, action: String(a._id) }, 'follow-through action failed');
-    return finish({ status: 'failed', error: String((err as Error).message ?? err).slice(0, 300) });
+    return finish({ status: 'failed', error: attempts > 1 ? `${message} (after ${attempts} attempts)` : message });
   }
 }
 
-/** Approved actions whose time has come (reminders on their day; everything else right away). */
+/** Approved actions whose time has come (reminders on their day, retries after their backoff; the rest now). */
 export async function runDueActions(now = new Date(), filter: { sessionId?: string } = {}): Promise<number> {
   const due = await FollowActionModel.find({
     ...filter,
     status: 'approved',
     executedAt: { $exists: false },
-    $or: [{ kind: { $ne: 'reminder' } }, { when: { $lte: now } }, { when: { $exists: false } }],
+    $and: [
+      { $or: [{ kind: { $ne: 'reminder' } }, { when: { $lte: now } }, { when: { $exists: false } }] },
+      { $or: [{ nextAttemptAt: { $exists: false } }, { nextAttemptAt: null }, { nextAttemptAt: { $lte: now } }] },
+    ],
   })
     .limit(200)
     .select({ _id: 1 })
@@ -469,6 +565,15 @@ export async function runDueActions(now = new Date(), filter: { sessionId?: stri
   let n = 0;
   for (const d of due) if (await executeAction(String(d._id), now)) n++;
   return n;
+}
+
+/** A failed action can be tried again by the host (keeps who was already reached and any created issue). */
+export async function retryAction(id: string, sessionId: string): Promise<boolean> {
+  const r = await FollowActionModel.updateOne(
+    { _id: id, sessionId, status: 'failed' },
+    { $set: { status: 'approved', attempts: 0 }, $unset: { executedAt: 1, nextAttemptAt: 1, error: 1 } },
+  );
+  return r.modifiedCount === 1;
 }
 
 // ---------- overdue work ----------
@@ -554,10 +659,19 @@ export async function planOverdueNudges(ai: AiClient, now = new Date(), limit = 
 }
 
 /** Progress for the project tool when someone ticks a task off or reopens it. Best effort. */
-export async function reportTaskProgress(meetingCode: string, sessionId: string, task: { id: string; task: string; owner: string | null; dueDate: string | null }, status: string): Promise<void> {
+export async function reportTaskProgress(
+  meetingCode: string,
+  sessionId: string,
+  task: { id: string; task: string; owner: string | null; dueDate: string | null; external?: ExternalIssue | null },
+  status: string,
+): Promise<void> {
   try {
     const m = await MeetingModel.findOne({ code: meetingCode }).select({ host: 1 }).lean();
     if (!m) return;
+    if (task.external) {
+      // Close or reopen the issue in Jira / Linear / Asana.
+      await setIssueDone(String(m.host), task.external, status === 'done').catch((err) => logger.warn({ err }, 'could not update the issue in the project tool'));
+    }
     const settings = await followThroughSettings(String(m.host));
     if (!settings.webhookUrl) return;
     await postWebhook(settings.webhookUrl, {
@@ -586,6 +700,10 @@ export const publicAction = (a: FollowAction) => ({
   durationMinutes: a.durationMinutes ?? null,
   reason: a.reason,
   result: a.result ?? null,
+  channel: (a as { channel?: string }).channel ?? null,
+  attempts: (a as { attempts?: number }).attempts ?? 0,
+  nextAttemptAt: (a as { nextAttemptAt?: Date }).nextAttemptAt ?? null,
+  external: ((a as { external?: ExternalIssue }).external ?? null) as ExternalIssue | null,
   error: a.error ?? null,
   executedAt: a.executedAt ?? null,
   createdAt: (a as { createdAt?: Date }).createdAt ?? null,

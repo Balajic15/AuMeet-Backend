@@ -12,6 +12,7 @@ import meetingRoutes from './routes/meetings.js';
 import memoryRoutes from './routes/memory.js';
 import aiRoutes from './routes/ai.js';
 import analyticsRoutes from './routes/analytics.js';
+import integrationRoutes from './routes/integrations.js';
 import livekitWebhook from './routes/livekitWebhook.js';
 import { csrfGuard } from './middleware/auth.js';
 import { auditMutations } from './services/audit.js';
@@ -78,6 +79,7 @@ export function createApp() {
   app.use('/api/memory', memoryRoutes);
   app.use('/api/ai', aiRoutes);
   app.use('/api/analytics', analyticsRoutes);
+  app.use('/api/integrations', limiter(120), integrationRoutes);
 
   app.use(notFoundHandler);
   app.use(errorHandler);
