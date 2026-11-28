@@ -700,7 +700,7 @@ router.post('/:code/insights/:sessionId/tasks', requireAuth, async (req, res) =>
   };
   await MeetingInsightModel.updateOne({ _id: session._id }, { $push: { 'insights.actionItems': item } });
   await MeetingInsightModel.updateOne({ _id: session._id }, editedUpdate(req.auth!.sub));
-  await captureCorrection(req, meeting, session.sessionId, 'task', null, [
+  await captureCorrection(req, meeting, session.sessionId, 'task', { id: item.id }, [
     { action: 'add', before: null, after: { task: item.task, owner: item.owner, dueDate: item.dueDate } },
   ]);
   res.status(201).json({ item });
@@ -734,7 +734,7 @@ router.post('/:code/insights/:sessionId/decisions', requireAuth, async (req, res
   };
   await MeetingInsightModel.updateOne({ _id: session._id }, { $push: { 'insights.decisions': item } });
   await MeetingInsightModel.updateOne({ _id: session._id }, editedUpdate(req.auth!.sub));
-  await captureCorrection(req, meeting, session.sessionId, 'decision', null, [
+  await captureCorrection(req, meeting, session.sessionId, 'decision', { id: item.id }, [
     { action: 'add', before: null, after: { statement: item.statement, status: item.status } },
   ]);
   res.status(201).json({ item });

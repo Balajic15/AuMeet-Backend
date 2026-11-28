@@ -18,7 +18,7 @@ decisions and tasks, speaks up when a decision is left unresolved, and remembers
 | **Speaking up** | At natural pauses it may ask to confirm a decision, find an owner, or clear up a conflict, depending on your settings. |
 | **Memory** | Continuity between sessions, earlier decisions and blockers, and "who owns…?" / "what's pending?" across all your meetings (Dashboard → Team, Ask). |
 | **Follow-through** | After the meeting: drafted emails, reminders, calendar invites and project-tool tasks. You approve external actions. It also nudges owners about overdue work. |
-| **Learning** | Every correction you make (owner, deadline, status, speaker, a missed or wrong item) becomes training data. Recurring mistakes become lessons the note-taker follows. |
+| **Learning** | Every correction you make (owner, deadline, status, speaker, a missed or wrong item) becomes training data. Recurring mistakes become lessons the note-taker follows, but only with enough independent evidence. Lessons are versioned, expire, and can be rolled back. |
 | **Analytics** | Participation balance, speaking time, agenda completion, time to decide, unresolved items, and task completion over time, with AI recommendations. |
 
 ## Architecture

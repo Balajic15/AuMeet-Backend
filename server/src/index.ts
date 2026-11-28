@@ -3,10 +3,12 @@ import { connectDb, disconnectDb } from './db.js';
 import { createApp } from './app.js';
 import { logger } from './logger.js';
 import { ensureDefaultProfile } from './services/aiBehaviour.js';
+import { ensureLearningPolicy } from './services/feedback.js';
 
 async function main() {
   await connectDb(env.MONGODB_URI);
   await ensureDefaultProfile();
+  await ensureLearningPolicy();
   const app = createApp();
   const server = app.listen(env.PORT, () => {
     logger.info(`MeetMind API listening on http://localhost:${env.PORT}`);

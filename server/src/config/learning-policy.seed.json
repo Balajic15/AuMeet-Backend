@@ -1,0 +1,9 @@
+{
+  "minCorrections": 3,
+  "minSessions": 2,
+  "minPeople": 1,
+  "minConfidence": 0.7,
+  "windowDays": 90,
+  "maxLessons": 12,
+  "maxVersions": 30
+}

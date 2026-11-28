@@ -98,3 +98,22 @@ describe('real-time intelligence', () => {
     expect(c.earlierItems.map((e) => `${e.ref} ${e.kind} ${e.text}`)).toEqual(['E1 risk Vendor contract not signed', 'E2 task Fix the API']);
   });
 });
+
+describe('learned lessons', () => {
+  it('applies only active lessons of the current version', async () => {
+    const { activeLessons } = await import('../src/lessons.js');
+    const doc = {
+      _id: 'h',
+      current: 2,
+      versions: [
+        { version: 1, lessons: [{ text: 'Old rule', status: 'active' as const }] },
+        { version: 2, lessons: [{ text: 'Applied', status: 'active' as const }, { text: 'Too little evidence', status: 'candidate' as const }, { text: 'Off', status: 'off' as const }] },
+      ],
+    };
+    expect(activeLessons(doc)).toEqual(['Applied']);
+    expect(activeLessons({ ...doc, current: 1 })).toEqual(['Old rule']);
+    // The older, unchecked format is never applied.
+    expect(activeLessons({ _id: 'h', lessons: [{ text: 'x', active: true }] } as never)).toEqual([]);
+    expect(activeLessons(null)).toEqual([]);
+  });
+});

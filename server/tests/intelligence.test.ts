@@ -113,20 +113,33 @@ describe('feedback engine', () => {
 
     const fb = await request(app).get('/api/ai/feedback').set(host.auth);
     expect(fb.body.total).toBe(4);
-    expect(fb.body.mistakes[0]).toMatchObject({ kind: 'task', count: expect.any(Number) });
+    expect(fb.body.mistakes).toHaveLength(4);
+    expect(fb.body.mistakes.every((m: { count: number }) => m.count === 1)).toBe(true);
 
     expect(await hostsToLearn()).toEqual([host.id]);
-    replies.set(LessonsOutput, { lessons: [{ text: 'Only record a task owner who accepted it', topic: 'owner', support: 2 }, { text: ' ', topic: 'x', support: 1 }] });
+    const rule = 'Only record a task owner who accepted it';
+    replies.set(LessonsOutput, {
+      lessons: [
+        { text: rule, topic: 'owner', basedOn: [1, 2, 3, 4], contradictedBy: [], confidence: 0.9 },
+        { text: ' ', topic: 'x', basedOn: [1], contradictedBy: [], confidence: 1 },
+        { text: 'Made up from nothing', topic: 'x', basedOn: [99], contradictedBy: [], confidence: 1 },
+      ],
+    });
     const doc = await learnLessons(host.id, fakeAi);
-    expect(doc!.lessons).toEqual([{ text: 'Only record a task owner who accepted it', topic: 'owner', support: 2, active: true }]);
+    // All four corrections come from ONE meeting: not enough to become a rule.
+    expect(doc!.versions[0]!.lessons).toEqual([
+      expect.objectContaining({ id: 'L1', text: rule, status: 'candidate', support: { corrections: 4, sessions: 1, people: 1 }, reason: expect.stringContaining('2 meetings') }),
+    ]);
     expect(prompts.at(-1)!.prompt).toContain('task.owner: AI wrote "Ravi Kumar" → corrected to "Hana Host"');
     expect(await hostsToLearn()).toEqual([]);
 
     // Switching a lesson off keeps it from coming back.
-    const off = await request(app).patch('/api/ai/feedback/lessons').set(host.auth).send({ text: 'Only record a task owner who accepted it', active: false });
-    expect(off.body.disabled).toEqual(['Only record a task owner who accepted it']);
+    const off = await request(app).patch('/api/ai/feedback/lessons/L1').set(host.auth).send({ active: false });
+    expect(off.body.disabled).toEqual([rule]);
+    expect(off.body.lessons[0]).toMatchObject({ status: 'off' });
     await learnLessons(host.id, fakeAi);
-    expect((await db().collection('ai_lessons').findOne({ _id: host.id as never }))!['lessons']).toEqual([]);
+    const after = (await request(app).get('/api/ai/feedback').set(host.auth)).body;
+    expect(after.lessons.filter((l: { text: string; status: string }) => l.text === rule).map((l: { status: string }) => l.status)).toEqual(['off']);
 
     const ds = await request(app).get('/api/ai/feedback/dataset').set(host.auth);
     expect(ds.text.trim().split('\n')).toHaveLength(4);

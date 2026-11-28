@@ -44,20 +44,65 @@ export interface FollowThroughSettings {
   autoSyncTasks: boolean;
 }
 
+export interface LearningPolicy {
+  minCorrections: number;
+  minSessions: number;
+  minPeople: number;
+  minConfidence: number;
+  windowDays: number;
+  maxLessons: number;
+  maxVersions: number;
+}
+
+export interface CorrectionBrief {
+  id: string;
+  kind: string;
+  action: 'edit' | 'delete' | 'add';
+  field: string | null;
+  before: unknown;
+  after: unknown;
+  at: string;
+  sessionId: string;
+  excluded: boolean;
+}
+
 export interface Lesson {
+  id: string;
   text: string;
   topic: string;
-  support: number;
-  active: boolean;
+  /** active = applied in meetings; candidate = waiting for more evidence; off = switched off. */
+  status: 'active' | 'candidate' | 'off';
+  reason: string;
+  confidence: number;
+  support: { corrections: number; sessions: number; people: number };
+  evidence: string[];
+  evidenceDetail: CorrectionBrief[];
+  contradictedDetail: CorrectionBrief[];
+  since: number;
+}
+
+export interface LessonVersionInfo {
+  version: number;
+  createdAt: string;
+  source: 'learn' | 'rollback' | 'toggle' | 'exclude' | 'policy';
+  fromVersion: number | null;
+  note: string;
+  active: number;
+  candidates: number;
+  lessons: Array<{ id: string; text: string; status: Lesson['status'] }>;
 }
 
 export interface Feedback {
   total: number;
+  excluded: number;
+  quarantined: number;
   mistakes: Array<{ kind: string; action: string; field: string | null; count: number; lastAt: string }>;
   lessons: Lesson[];
+  versions: LessonVersionInfo[];
+  current: number | null;
+  policy: { system: LearningPolicy; host: Partial<LearningPolicy>; effective: LearningPolicy };
   disabled: string[];
   learnedAt: string | null;
-  learnedFrom: number;
   canLearn: boolean;
 }
 
@@ -117,8 +162,21 @@ export class AiService {
     return firstValueFrom(this.http.post<Feedback>('/api/ai/feedback/learn', {}));
   }
 
-  toggleLesson(text: string, active: boolean): Promise<Feedback> {
-    return firstValueFrom(this.http.patch<Feedback>('/api/ai/feedback/lessons', { text, active }));
+  toggleLesson(id: string, active: boolean): Promise<Feedback> {
+    return firstValueFrom(this.http.patch<Feedback>(`/api/ai/feedback/lessons/${encodeURIComponent(id)}`, { active }));
+  }
+
+  rollbackLessons(version: number): Promise<Feedback> {
+    return firstValueFrom(this.http.post<Feedback>('/api/ai/feedback/rollback', { version }));
+  }
+
+  /** "This correction was wrong" (excluded) or restore it. */
+  excludeCorrection(id: string, excluded: boolean): Promise<Feedback> {
+    return firstValueFrom(this.http.patch<Feedback>(`/api/ai/feedback/corrections/${encodeURIComponent(id)}`, { excluded }));
+  }
+
+  saveLearningPolicy(patch: Partial<LearningPolicy>): Promise<Feedback> {
+    return firstValueFrom(this.http.put<Feedback>('/api/ai/feedback/policy', patch));
   }
 
   async resetFeedback(): Promise<number> {

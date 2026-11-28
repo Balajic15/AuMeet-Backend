@@ -65,8 +65,20 @@ webhook everything still works; meeting status just stays `idle` until the host 
   every `FOLLOW_THROUGH_SWEEP_SECONDS` sends due reminders and nudges owners of overdue tasks (once per task). The
   project-tool webhook (HTTPS, public addresses only) receives `task.created` / `task.updated` JSON.
 - **Feedback engine** (`services/feedback.ts`): every edit, delete, added item or speaker fix is stored in
-  `ai_corrections` with the transcript lines behind it. Every `LEARN_SWEEP_SECONDS` the model turns a host's
-  corrections into lessons (`ai_lessons`) that the live note-taker follows.
+  `ai_corrections` with the transcript lines behind it. Every `LEARN_SWEEP_SECONDS` the model proposes lessons from a host's
+  corrections; safety rules keep one wrong correction from becoming a team rule:
+  - **Evidence is counted by the server**, from the corrections each lesson cites. Only corrections inside the policy
+    window count; ones that were undone later (an edit set back, an item added then deleted), marked wrong, or
+    quarantined by a rollback don't.
+  - **Thresholds** (the learning policy: `ai_profiles/learning-policy`, seeded from `config/learning-policy.seed.json`,
+    host overrides via `PUT /api/ai/feedback/policy`): a lesson is applied only with enough corrections, from enough
+    meetings and people, above a confidence bar, and with no correction against it. Otherwise it stays a *candidate*
+    and never reaches the note-taker. Lessons expire when their corrections leave the window.
+  - **Versions**: each learning run, rollback, lesson switch, excluded correction or threshold change is a new version
+    in `ai_lessons`. The agent applies only the current version's active lessons.
+  - **Rollback** (`POST /api/ai/feedback/rollback { version }`) restores any kept version and quarantines the corrections
+    behind the lessons it removes, so they aren't re-learned; restoring a version that needs them releases them.
+    `PATCH /api/ai/feedback/corrections/:id { excluded }` marks a single correction wrong (or counts it again).
 - **Ask your meetings** now also gets a structured status ledger (tasks with owners and due dates, decision statuses,
   open risks), so "who owns X" and "what is pending" are answered from facts, not only from similar text.
 

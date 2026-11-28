@@ -6,7 +6,19 @@ import { UserModel } from '../models/User.js';
 import { BehaviourOverride, defaultBehaviour, mergeLayers, resolve, Behaviour } from '../services/aiBehaviour.js';
 import { badRequest, notFound } from '../utils/httpError.js';
 import { aiConfigured, getAi } from '../ai/gemini.js';
-import { corrections, feedbackStats, learnLessons, lessonsCol } from '../services/feedback.js';
+import {
+  corrections,
+  feedbackStats,
+  LearningPolicy,
+  learningPolicy,
+  learnLessons,
+  lessonsCol,
+  lessonsView,
+  recheckLessons,
+  rollbackLessons,
+  setCorrectionExcluded,
+  toggleLesson,
+} from '../services/feedback.js';
 import { assertSafeWebhook, FollowThroughSettings, followThroughSettings } from '../services/followThrough.js';
 import { mailConfigured } from '../services/mailer.js';
 
@@ -85,18 +97,22 @@ router.put('/follow-through', async (req, res) => {
 // ---------- learning from corrections (self-improving notes) ----------
 
 async function feedbackView(hostId: string) {
-  const [stats, doc] = await Promise.all([feedbackStats(hostId), lessonsCol().findOne({ _id: hostId })]);
-  return {
-    ...stats,
-    lessons: doc?.lessons ?? [],
-    disabled: doc?.disabled ?? [],
-    learnedAt: doc?.updatedAt ?? null,
-    learnedFrom: doc?.learnedFrom ?? 0,
-    canLearn: aiConfigured(),
-  };
+  const [stats, view] = await Promise.all([feedbackStats(hostId), lessonsView(hostId)]);
+  return { ...stats, ...view, canLearn: aiConfigured() };
 }
 
-// Corrections made to the notes of my meetings, recurring mistakes, and the lessons the AI now follows.
+/** Service errors carry a status (404 for an unknown version / lesson / correction). */
+async function guarded<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (err) {
+    if ((err as { status?: number }).status === 404) throw notFound((err as Error).message);
+    throw err;
+  }
+}
+
+// Corrections made to the notes of my meetings, recurring mistakes, current lessons (applied and waiting),
+// their evidence, the learning policy, and the version history.
 router.get('/feedback', async (req, res) => {
   res.json(await feedbackView(req.auth!.sub));
 });
@@ -104,24 +120,44 @@ router.get('/feedback', async (req, res) => {
 // Re-learn now instead of waiting for the worker.
 router.post('/feedback/learn', async (req, res) => {
   const ai = getAi();
-  await learnLessons(req.auth!.sub, ai);
+  await learnLessons(req.auth!.sub, ai, new Date(), req.auth!.sub);
   res.json(await feedbackView(req.auth!.sub));
 });
 
-const LessonToggle = z.object({ text: z.string().trim().min(1).max(500), active: z.boolean() });
+// Go back to an earlier version of the lessons.
+router.post('/feedback/rollback', async (req, res) => {
+  const { version } = z.object({ version: z.number().int().positive() }).parse(req.body);
+  await guarded(() => rollbackLessons(req.auth!.sub, version, req.auth!.sub));
+  res.json(await feedbackView(req.auth!.sub));
+});
 
-// Switch a lesson off (it is never proposed again) or back on.
-router.patch('/feedback/lessons', async (req, res) => {
-  const { text, active } = LessonToggle.parse(req.body);
+// Switch a lesson off (never applied or proposed again) or back on (re-checked against the policy).
+router.patch('/feedback/lessons/:id', async (req, res) => {
+  const { active } = z.object({ active: z.boolean() }).parse(req.body);
+  await guarded(() => toggleLesson(req.auth!.sub, String(req.params.id), active, req.auth!.sub));
+  res.json(await feedbackView(req.auth!.sub));
+});
+
+// "This correction was wrong": it stops counting as evidence right away.
+router.patch('/feedback/corrections/:id', async (req, res) => {
+  const { excluded } = z.object({ excluded: z.boolean() }).parse(req.body);
+  await guarded(() => setCorrectionExcluded(req.auth!.sub, String(req.params.id), excluded, req.auth!.sub));
+  res.json(await feedbackView(req.auth!.sub));
+});
+
+// My overrides of the learning thresholds (stricter or looser than the system policy).
+router.put('/feedback/policy', async (req, res) => {
+  const patch = LearningPolicy.partial().strict().parse(req.body ?? {});
   const hostId = req.auth!.sub;
-  const doc = await lessonsCol().findOne({ _id: hostId });
-  if (!doc || !doc.lessons.some((l) => l.text === text)) throw notFound('Lesson not found');
-  const key = text.toLowerCase();
-  const disabled = active ? doc.disabled.filter((d) => d.toLowerCase() !== key) : [...new Set([...doc.disabled, text])];
+  const { host } = await learningPolicy(hostId);
+  const next = { ...host, ...patch };
   await lessonsCol().updateOne(
     { _id: hostId },
-    { $set: { lessons: doc.lessons.map((l) => (l.text === text ? { ...l, active } : l)), disabled } },
+    { $set: { policy: next }, $setOnInsert: { current: 0, versions: [], disabled: [], updatedAt: new Date(0) } },
+    { upsert: true },
   );
+  // New thresholds apply to the current lessons right away.
+  await recheckLessons(hostId, hostId);
   res.json(await feedbackView(hostId));
 });
 
