@@ -9,6 +9,7 @@ const WATCH: Array<{ key: WatchKey; label: string }> = [
   { key: 'time', label: 'Time and agenda' },
   { key: 'followUps', label: 'Open items from last meeting' },
   { key: 'contradictions', label: 'Reversing an earlier decision' },
+  { key: 'risks', label: 'Conflicts, risky deadlines, blockers' },
 ];
 
 /** Edits a full behaviour; the parent decides where it is saved (account or meeting). */

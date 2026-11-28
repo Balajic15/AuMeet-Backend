@@ -52,6 +52,8 @@ export function followUpEmail(
     ['Still undecided', undecided],
     ['Other tasks', others.map(taskLine)],
     ['Open questions', questions],
+    ['Not finished', recap.unfinished ?? []],
+    ['Risks to clear up', (session.insights?.risks ?? []).filter((r) => r.status === 'open').map((r) => r.description)],
   ];
   const goal = recap.goalOutcome && GOAL_LABEL[recap.goalOutcome.status];
 

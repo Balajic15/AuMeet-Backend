@@ -15,6 +15,8 @@ export interface Utterance {
   text: string;
   language: string;
   at: number;
+  /** Voiced time of a spoken line (VAD), for speaking-time analytics. */
+  durationMs?: number;
 }
 
 /**
@@ -94,6 +96,7 @@ export class TranscriptSink {
         text: u.text,
         language: u.language,
         at: new Date(u.at),
+        ...(u.durationMs ? { durationMs: u.durationMs } : {}),
       })
       .catch((err) => log().warn({ err }, 'failed to store transcript line'));
   }

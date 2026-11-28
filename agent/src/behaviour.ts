@@ -27,6 +27,8 @@ export const Behaviour = z.object({
     time: z.boolean(),
     followUps: z.boolean(),
     contradictions: z.boolean(),
+    /** Conflicting commitments, unrealistic deadlines, dependencies, repeated blockers. */
+    risks: z.boolean().optional(),
   }),
   /** Free text from the host, e.g. "Mostly speak Hindi", "Be very brief", "Never joke". */
   customInstructions: z.string().max(2000),

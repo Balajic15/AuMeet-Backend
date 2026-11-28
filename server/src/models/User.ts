@@ -17,6 +17,8 @@ const UserSchema = new Schema(
     tokenVersion: { type: Number, default: 0 },
     // My default AI behaviour (overrides of the system profile; see services/aiBehaviour.ts).
     aiBehaviour: { type: Schema.Types.Mixed },
+    // What the follow-through agent may do after my meetings (services/followThrough.ts).
+    followThrough: { type: Schema.Types.Mixed },
     /** SHA-256 of the one-time password-reset token, never the token itself. */
     resetTokenHash: { type: String, select: false, index: { sparse: true } },
     resetTokenExpires: { type: Date, select: false },

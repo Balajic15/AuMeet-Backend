@@ -5,6 +5,8 @@ import { AuthService, apiErrorMessage } from '../../core/auth.service';
 import { Icon } from '../../shared/icon';
 import { AiService, behaviourDiff, type Behaviour, type LearningStat } from '../../core/ai.service';
 import { BehaviourEditor } from '../../shared/behaviour-editor';
+import { FollowThroughSettingsCard } from './follow-through-settings';
+import { NotesLearning } from './notes-learning';
 import { Modal } from '../../shared/modal';
 import { ToastService } from '../../shared/toast';
 import { UserMenu } from '../../shared/user-menu';
@@ -12,7 +14,7 @@ import { UserMenu } from '../../shared/user-menu';
 @Component({
   selector: 'app-account-page',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [ReactiveFormsModule, RouterLink, Icon, Modal, UserMenu, BehaviourEditor],
+  imports: [ReactiveFormsModule, RouterLink, Icon, Modal, UserMenu, BehaviourEditor, NotesLearning, FollowThroughSettingsCard],
   template: `
     <header class="topbar">
       <a routerLink="/"><img src="aumeet-logo.png" alt="AuMeet" class="wordmark" /></a>
@@ -77,6 +79,9 @@ import { UserMenu } from '../../shared/user-menu';
             <div class="actions"><button class="btn btn-outline" type="button" [disabled]="busy() === 'ai'" (click)="forget()">Forget what it learned</button></div>
           }
         </section>
+
+        <section class="card"><app-notes-learning /></section>
+        <section class="card"><app-follow-through-settings /></section>
 
         <!-- Password -->
         <section class="card">

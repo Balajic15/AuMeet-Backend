@@ -9,6 +9,18 @@ decisions and tasks, speaks up when a decision is left unresolved, and remembers
 > AuMeet doesn't record MongoDB as the decision. It marks it *Needs confirmation* and, at a natural
 > pause, asks: *"Can we confirm which database the team has agreed to use?"*
 
+## What the AI does
+
+| | |
+|---|---|
+| **Live notes** | Decisions (*Confirmed*, *Suggested*, *Needs confirmation*), tasks with owners and deadlines, open questions, key points, assumptions, and risks and conflicts, all updated during the meeting with transcript evidence. |
+| **Copilot** | A quiet panel in the meeting: what's being discussed, off-topic warnings, missing information, questions to ask, what to discuss next, and agenda and time advice. |
+| **Speaking up** | At natural pauses it may ask to confirm a decision, find an owner, or clear up a conflict, depending on your settings. |
+| **Memory** | Continuity between sessions, earlier decisions and blockers, and "who owns…?" / "what's pending?" across all your meetings (Dashboard → Team, Ask). |
+| **Follow-through** | After the meeting: drafted emails, reminders, calendar invites and project-tool tasks. You approve external actions. It also nudges owners about overdue work. |
+| **Learning** | Every correction you make (owner, deadline, status, speaker, a missed or wrong item) becomes training data. Recurring mistakes become lessons the note-taker follows. |
+| **Analytics** | Participation balance, speaking time, agenda completion, time to decide, unresolved items, and task completion over time, with AI recommendations. |
+
 ## Architecture
 
 ```
@@ -25,7 +37,7 @@ Browser (Angular) ──/api──▶ nginx ──▶ server (Express) ──▶
 | Folder | What | Docs |
 |---|---|---|
 | `web/` | Angular 22 app: auth, dashboard, lobby, meeting room, notes, My tasks, Ask | — |
-| `server/` | Express 5 API + background worker | [server/README.md](server/README.md) |
+| `server/` | Express 5 API + background worker (recaps, memory, follow-through, learning) | [server/README.md](server/README.md) |
 | `agent/` | The AI participant | [agent/README.md](agent/README.md) |
 
 ## Services you need

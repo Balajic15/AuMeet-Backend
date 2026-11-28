@@ -12,13 +12,14 @@ import { Icon } from '../../shared/icon';
 import { Modal } from '../../shared/modal';
 import { ToastService } from '../../shared/toast';
 import { UserMenu } from '../../shared/user-menu';
+import { TeamCommitments } from './team-commitments';
 import { MemoryService, type MyTask, type Overview } from '../../core/memory.service';
 import { AskBox } from './ask-box';
 import { MyTasks } from './my-tasks';
 import { PrepareDialog } from './prepare-dialog';
 import { MeetingAiDialog } from './meeting-ai-dialog';
 
-type Tab = 'upcoming' | 'recent' | 'tasks';
+type Tab = 'upcoming' | 'recent' | 'tasks' | 'team';
 type Dialog =
   | { kind: 'link'; meeting: Meeting }
   | { kind: 'schedule' }
@@ -43,7 +44,7 @@ function nextHalfHour(): Date {
 @Component({
   selector: 'app-dashboard',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [Icon, Modal, UserMenu, ReactiveFormsModule, RouterLink, AskBox, MyTasks, PrepareDialog, MeetingAiDialog],
+  imports: [Icon, Modal, UserMenu, ReactiveFormsModule, RouterLink, AskBox, MyTasks, PrepareDialog, MeetingAiDialog, TeamCommitments],
   host: { '(document:click)': 'closeMenus($event)' },
   templateUrl: './dashboard.html',
   styleUrl: './dashboard.scss',

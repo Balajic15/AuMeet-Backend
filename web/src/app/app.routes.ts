@@ -44,6 +44,12 @@ export const routes: Routes = [
     loadComponent: () => import('./pages/account/account-page').then((m) => m.AccountPage),
   },
   {
+    path: 'analytics',
+    canActivate: [authGuard],
+    title: 'Analytics · AuMeet',
+    loadComponent: () => import('./pages/analytics/analytics-page').then((m) => m.AnalyticsPage),
+  },
+  {
     path: ':code/insights',
     canMatch: [(_r: unknown, segments: { path: string }[]) => MEETING_CODE_RE.test(segments[0]?.path ?? '')],
     canActivate: [authGuard],

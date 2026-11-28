@@ -100,3 +100,11 @@ select.input, input[type='date'].input { font-size: 15px; height: 44px; }
 .o-met { border-left-color: var(--brand); }
 .o-partly_met { border-left-color: #ffb020; }
 .o-not_met { border-left-color: var(--danger); }
+
+.edit-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 12px;
+  .edit-hint { margin: 0; } }
+.add-btns { display: inline-flex; gap: 8px; }
+.btn.small { width: auto; height: 34px; padding: 0 12px; font-size: 13.5px; display: inline-flex; align-items: center; gap: 6px; }
+.who-btn { padding: 0; background: none; border: none; color: inherit; font: inherit; font-weight: 600; text-align: left; cursor: pointer;
+  text-decoration: underline dotted #666; text-underline-offset: 3px; &:hover { color: var(--link); } }
+.quote { margin: 0 0 16px; color: #dcdcdc; font-style: italic; line-height: 1.5; }

@@ -468,3 +468,6 @@
     color: var(--text-muted);
   }
 }
+
+.tab-link { margin-left: auto; align-self: center; padding: 0 6px; font-size: 14px; color: var(--text-muted); }
+.tab-link:hover { color: var(--text); }

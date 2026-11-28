@@ -1,5 +1,5 @@
 import type { Db } from 'mongodb';
-import type { Carryover, PastDecisionRef } from './intel/schema.js';
+import type { Carryover, EarlierItemRef, PastDecisionRef } from './intel/schema.js';
 
 /*
  * Continuity between meetings. Sources, both chosen by the host:
@@ -16,6 +16,7 @@ interface Row {
   insights?: {
     decisions?: Array<{ statement: string; status: string; options?: string[] }>;
     actionItems?: Array<{ task: string; owner: string | null; dueDate: string | null; status: string }>;
+    risks?: Array<{ description: string; status: string; involves?: string[] }>;
   };
 }
 
@@ -24,12 +25,15 @@ export interface Continuity {
   carryover: Carryover | null;
   /** Agreed decisions from earlier sessions, newest first, with prompt ids P1, P2, … */
   pastDecisions: PastDecisionRef[];
+  /** Still-open tasks and risks from earlier sessions, with prompt ids E1, E2, … (repeated blockers, dependencies). */
+  earlierItems: EarlierItemRef[];
 }
 
 const day = (d?: Date) => (d ? new Date(d).toISOString().slice(0, 10) : '');
 const MAX_SESSIONS = 6;
 const MAX_PAST_DECISIONS = 25;
 const MAX_ITEMS = 8;
+const MAX_EARLIER_ITEMS = 25;
 
 export function buildContinuity(rows: Row[], today: Date): Continuity {
   const sorted = [...rows].sort((a, b) => (b.startedAt?.getTime() ?? 0) - (a.startedAt?.getTime() ?? 0));
@@ -45,6 +49,24 @@ export function buildContinuity(rows: Row[], today: Date): Continuity {
       if (pastDecisions.length >= MAX_PAST_DECISIONS) break;
     }
     if (pastDecisions.length >= MAX_PAST_DECISIONS) break;
+  }
+
+  const earlierItems: EarlierItemRef[] = [];
+  const seenItems = new Set<string>();
+  const addEarlier = (item: Omit<EarlierItemRef, 'ref'>) => {
+    const key = `${item.kind}:${item.text.trim().toLowerCase()}`;
+    if (!item.text.trim() || seenItems.has(key) || earlierItems.length >= MAX_EARLIER_ITEMS) return;
+    seenItems.add(key);
+    earlierItems.push({ ref: `E${earlierItems.length + 1}`, ...item, text: item.text.trim() });
+  };
+  for (const r of sorted) {
+    const meta = { date: day(r.startedAt), title: r.title ?? 'Earlier meeting' };
+    for (const x of r.insights?.risks ?? []) {
+      if (x.status === 'open') addEarlier({ kind: 'risk', text: x.description, owner: x.involves?.join(', ') || null, dueDate: null, ...meta });
+    }
+    for (const a of r.insights?.actionItems ?? []) {
+      if (a.status === 'open') addEarlier({ kind: 'task', text: a.task, owner: a.owner ?? null, dueDate: a.dueDate ?? null, ...meta });
+    }
   }
 
   const last = sorted[0];
@@ -63,17 +85,17 @@ export function buildContinuity(rows: Row[], today: Date): Continuity {
       carryover = { fromTitle: last.title ?? 'Previous meeting', fromDate: day(last.startedAt), decisions, tasks };
     }
   }
-  return { carryover, pastDecisions };
+  return { carryover, pastDecisions, earlierItems };
 }
 
 export async function loadContinuity(db: Db, meetingCodes: string[], currentSessionId: string, today = new Date()): Promise<Continuity> {
-  if (meetingCodes.length === 0) return { carryover: null, pastDecisions: [] };
+  if (meetingCodes.length === 0) return { carryover: null, pastDecisions: [], earlierItems: [] };
   const rows = (await db
     .collection('meeting_insights')
     .find({ meetingCode: { $in: meetingCodes }, sessionId: { $ne: currentSessionId } })
     .sort({ startedAt: -1 })
     .limit(MAX_SESSIONS)
-    .project({ meetingCode: 1, sessionId: 1, title: 1, startedAt: 1, 'insights.decisions': 1, 'insights.actionItems': 1 })
+    .project({ meetingCode: 1, sessionId: 1, title: 1, startedAt: 1, 'insights.decisions': 1, 'insights.actionItems': 1, 'insights.risks': 1 })
     .toArray()) as unknown as Row[];
   return buildContinuity(rows, today);
 }
@@ -91,3 +113,33 @@ export function renderCarryover(c: Carryover | null): string {
 
 /** A virtual agenda item so follow-ups are tracked like the rest of the agenda. */
 export const FOLLOW_UP_ITEM = { id: 'followups', title: 'Follow-ups from last meeting', minutes: null as number | null };
+
+/**
+ * Structured ledger of earlier sessions (same sources as above) for questions like "who owns the
+ * pricing page?", "what did we decide on billing?", "what is still pending?". Newest first.
+ */
+export async function commitmentsLedger(db: Db, meetingCodes: string[], currentSessionId: string, maxSessions = 10): Promise<string> {
+  if (meetingCodes.length === 0) return '';
+  const rows = (await db
+    .collection('meeting_insights')
+    .find({ meetingCode: { $in: meetingCodes }, sessionId: { $ne: currentSessionId } })
+    .sort({ startedAt: -1 })
+    .limit(maxSessions)
+    .project({ title: 1, startedAt: 1, 'insights.decisions': 1, 'insights.actionItems': 1, 'insights.risks': 1 })
+    .toArray()) as unknown as Row[];
+  const today = new Date().toISOString().slice(0, 10);
+  const out: string[] = [];
+  for (const r of rows) {
+    const items: string[] = [];
+    for (const d of r.insights?.decisions ?? []) {
+      if (d.status !== 'rejected') items.push(`  decision [${d.status}]: ${d.statement}${d.options?.length && d.status !== 'agreed' ? ` (options: ${d.options.join(' vs ')})` : ''}`);
+    }
+    for (const a of r.insights?.actionItems ?? []) {
+      const late = a.status === 'open' && a.dueDate && a.dueDate < today ? ' OVERDUE' : '';
+      items.push(`  task [${a.status}${late}]: ${a.task} – owner ${a.owner ?? 'none'}${a.dueDate ? `, due ${a.dueDate}` : ''}`);
+    }
+    for (const x of r.insights?.risks ?? []) items.push(`  risk [${x.status}]: ${x.description}`);
+    if (items.length) out.push(`${day(r.startedAt)} "${r.title ?? 'Meeting'}":\n${items.join('\n')}`);
+  }
+  return out.join('\n');
+}

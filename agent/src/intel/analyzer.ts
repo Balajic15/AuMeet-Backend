@@ -2,7 +2,7 @@ import type { MeetingTranscript } from '../transcript.js';
 import type { AnalyzeFn } from './gemini.js';
 import { normalize, type Person } from './normalize.js';
 import { ANALYST_SYSTEM, analystPrompt } from './prompt.js';
-import { emptyInsights, type Insights } from './schema.js';
+import { emptyInsights, type EarlierItemRef, type Insights } from './schema.js';
 
 export interface AnalyzerOptions {
   title: string;
@@ -16,6 +16,8 @@ export interface AnalyzerOptions {
     goal: string;
     agenda: Array<{ id: string; title: string; minutes: number | null }>;
     pastDecisions?: Array<{ ref: string; statement: string; date: string; title: string }>;
+    earlierItems?: EarlierItemRef[];
+    lessons?: string[];
   };
   /** Run once this many new human lines have arrived. */
   batchSize?: number;
@@ -162,6 +164,8 @@ export class MeetingAnalyzer {
           goal: prep?.goal,
           agenda: prep?.agenda,
           pastDecisions: prep?.pastDecisions,
+          earlierItems: prep?.earlierItems,
+          lessons: prep?.lessons,
           elapsedMinutes: Math.round((this.now() - all[0]!.at) / 60_000),
         }),
       );
@@ -173,6 +177,7 @@ export class MeetingAnalyzer {
         goal: prep?.goal,
         agendaPlan: prep?.agenda,
         pastDecisions: prep?.pastDecisions,
+        earlierItems: prep?.earlierItems,
       });
       this.pending = Math.max(0, this.pending - consumed);
       this.opts.onUpdate(this.state);

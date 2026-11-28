@@ -57,7 +57,7 @@ describe('continuity between meetings', () => {
   it('has nothing to carry over when everything was settled', () => {
     const settled = [{ ...sessions[0]! }];
     expect(buildContinuity(settled, new Date()).carryover).toBeNull();
-    expect(buildContinuity([], new Date())).toEqual({ carryover: null, pastDecisions: [] });
+    expect(buildContinuity([], new Date())).toEqual({ carryover: null, pastDecisions: [], earlierItems: [] });
   });
 
   it('maps the model’s "contradicts" id to the earlier decision and keeps it', () => {

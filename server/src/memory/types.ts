@@ -10,6 +10,9 @@ export interface StoredDecision {
   supporters?: string[];
   objectors?: string[];
   confirmationNeeded?: string | null;
+  firstSeenAt?: string;
+  settledAt?: string | null;
+  evidence?: number[];
 }
 
 export interface StoredActionItem {
@@ -20,6 +23,19 @@ export interface StoredActionItem {
   deadline: string | null;
   dueDate: string | null;
   status: 'open' | 'done';
+  evidence?: number[];
+  firstSeenAt?: string;
+  updatedAt?: string;
+}
+
+export interface StoredRisk {
+  id: string;
+  kind: string;
+  description: string;
+  involves?: string[];
+  severity?: 'low' | 'medium' | 'high';
+  suggestedQuestion?: string | null;
+  status: 'open' | 'resolved';
 }
 
 export interface StoredInsights {
@@ -28,6 +44,11 @@ export interface StoredInsights {
   actionItems?: StoredActionItem[];
   openQuestions?: Array<{ id: string; question: string; status: 'open' | 'answered' }>;
   topics?: Array<{ id: string; title: string }>;
+  risks?: StoredRisk[];
+  assumptions?: Array<{ id: string; statement: string; status: string }>;
+  keyPoints?: Array<{ id: string; point: string; importance: string }>;
+  agenda?: Array<{ id: string; title: string; minutes: number | null; status: string; startedAt?: string | null; doneAt?: string | null }>;
+  goal?: { text: string; status: string } | null;
 }
 
 export interface Recap {
@@ -36,6 +57,8 @@ export interface Recap {
   highlights: string[];
   nextSteps: string[];
   goalOutcome?: { status: 'met' | 'partly_met' | 'not_met' | 'no_goal'; summary: string } | null;
+  /** Objectives, agenda items and issues the meeting did not finish. */
+  unfinished?: string[];
   generatedAt: string;
 }
 

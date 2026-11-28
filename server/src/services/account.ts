@@ -24,6 +24,10 @@ export async function deleteAccount(userId: string): Promise<{ meetingsDeleted: 
     MeetingInsightModel.deleteMany({ meetingCode: { $in: codes } }),
     MeetingModel.deleteMany({ host: userId }),
     mongoose.connection.collection('ai_reactions').deleteMany({ hostId: String(userId) }),
+    // Corrections hold transcript excerpts; follow-up actions hold drafted emails.
+    mongoose.connection.collection('ai_corrections').deleteMany({ $or: [{ hostId: String(userId) }, { meetingCode: { $in: codes } }] }),
+    mongoose.connection.collection('ai_lessons').deleteOne({ _id: String(userId) } as never),
+    mongoose.connection.collection('follow_actions').deleteMany({ $or: [{ hostId: String(userId) }, { meetingCode: { $in: codes } }] }),
     deleteRecordings({ meetingCode: { $in: codes } }),
     MeetingDocumentModel.deleteMany({ meetingCode: { $in: codes } }),
   ]);

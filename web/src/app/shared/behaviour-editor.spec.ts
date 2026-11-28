@@ -5,7 +5,7 @@ import { BehaviourEditor } from './behaviour-editor';
 
 const base: Behaviour = {
   name: 'AuMeet', wakeWords: ['Au Meet'], talkativeness: 0.5, tone: 'neutral', replyLength: 'brief',
-  watchFor: { decisions: true, owners: true, disputes: true, goal: true, time: true, followUps: true, contradictions: true },
+  watchFor: { decisions: true, owners: true, disputes: true, goal: true, time: true, followUps: true, contradictions: true, risks: true },
   customInstructions: '', learnFromReactions: true,
   limits: { minGapSeconds: 60, maxPerTenMinutes: 4, pauseMs: 1800, warmupSeconds: 20, repeatTopicMinutes: 15, minCheckSeconds: 8 },
   engine: { contextLines: 30 },

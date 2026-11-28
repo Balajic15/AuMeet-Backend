@@ -4,8 +4,8 @@ import { Icon } from './icon';
 
 const STATUS_LABEL: Record<DecisionStatus, string> = {
   disputed: 'Needs confirmation',
-  proposed: 'Proposed',
-  agreed: 'Agreed',
+  proposed: 'Suggested',
+  agreed: 'Confirmed',
   rejected: 'Dropped',
 };
 
@@ -22,6 +22,56 @@ const STATUS_ORDER: DecisionStatus[] = ['disputed', 'proposed', 'agreed', 'rejec
   imports: [Icon],
   template: `
     @let i = insights();
+    @if (live() && i.copilot; as cp) {
+      <section class="block copilot" aria-live="polite">
+        <h3><app-icon name="sparkles" [size]="13" /> Copilot</h3>
+        @if (cp.offTopic) {
+          <p class="drift"><app-icon name="alert" [size]="14" /> Off topic{{ cp.offTopicNote ? ': ' + cp.offTopicNote : '' }}</p>
+        }
+        @if (cp.currentFocus) { <p class="focus"><span class="k">Now</span> {{ cp.currentFocus }}</p> }
+        @if (cp.discussNext) { <p class="focus"><span class="k">Next</span> {{ cp.discussNext }}</p> }
+        @if (cp.agendaAdvice) { <p class="focus"><span class="k">Time</span> {{ cp.agendaAdvice }}</p> }
+        @if (cp.missingInfo.length) {
+          <p class="sub">Missing information</p>
+          <ul class="plain">@for (m of cp.missingInfo; track $index) { <li>{{ m }}</li> }</ul>
+        }
+        @if (cp.suggestedQuestions.length) {
+          <p class="sub">Questions to ask</p>
+          <ul class="plain qs">@for (q of cp.suggestedQuestions; track $index) { <li>“{{ q }}”</li> }</ul>
+        }
+      </section>
+    }
+    @if (openRisks().length) {
+      <section class="block">
+        <h3>Risks &amp; conflicts <span class="n warn">{{ openRisks().length }}</span></h3>
+        @for (r of openRisks(); track r.id) {
+          <article class="card risk" [class]="'card risk sev-' + r.severity">
+            <div class="card-head">
+              <span class="chip risk-chip">{{ riskLabel(r.kind) }}</span>
+              <span class="topic">{{ r.severity }} risk</span>
+            </div>
+            <p class="statement">{{ r.description }}</p>
+            @if (r.earlier; as e) {
+              <p class="conflict"><app-icon name="alert" [size]="14" /> Also open since {{ e.date }} (“{{ e.title }}”): {{ e.text }}</p>
+            }
+            @if (r.suggestedQuestion) {
+              <p class="ask"><app-icon name="sparkles" [size]="14" /> {{ r.suggestedQuestion }}</p>
+            }
+            @if (r.involves.length) { <p class="who">Involves {{ r.involves.join(', ') }}</p> }
+            @if (sourcesFor(r.evidence).length) {
+              <button type="button" class="src-btn" (click)="toggle(r.id)">
+                {{ open() === r.id ? 'Hide' : 'Show' }} sources ({{ sourcesFor(r.evidence).length }})
+              </button>
+              @if (open() === r.id) {
+                <ul class="sources">
+                  @for (l of sourcesFor(r.evidence); track l.seq) { <li><strong>{{ l.speakerName }}:</strong> “{{ l.text }}”</li> }
+                </ul>
+              }
+            }
+          </article>
+        }
+      </section>
+    }
     @if (i.carryover; as c) {
       <section class="block carry">
         <h3>From last meeting</h3>
@@ -65,6 +115,14 @@ const STATUS_ORDER: DecisionStatus[] = ['disputed', 'proposed', 'agreed', 'rejec
       <section class="block">
         <h3>Summary</h3>
         <p class="summary">{{ i.summary }}</p>
+      </section>
+    }
+    @if (keyPoints().length) {
+      <section class="block">
+        <h3>Key points</h3>
+        <ul class="points">
+          @for (k of keyPoints(); track k.id) { <li [class.high]="k.importance === 'high'">{{ k.point }}</li> }
+        </ul>
       </section>
     }
 
@@ -118,6 +176,21 @@ const STATUS_ORDER: DecisionStatus[] = ['disputed', 'proposed', 'agreed', 'rejec
         </article>
       }
     </section>
+
+    @if (assumptions().length) {
+      <section class="block">
+        <h3>Assumptions <span class="n">{{ assumptions().length }}</span></h3>
+        <p class="note">Treated as true but not confirmed. Check them before relying on them.</p>
+        <ul class="points">
+          @for (a of assumptions(); track a.id) {
+            <li [class.struck]="a.status === 'invalidated'">
+              {{ a.statement }}@if (a.madeBy) { <span class="asked">— {{ a.madeBy }}</span> }
+              @if (a.status !== 'unverified') { <span class="tag">{{ a.status }}</span> }
+            </li>
+          }
+        </ul>
+      </section>
+    }
 
     <section class="block">
       <h3>Action items <span class="n">{{ i.actionItems.length }}</span></h3>
@@ -268,6 +341,24 @@ const STATUS_ORDER: DecisionStatus[] = ['disputed', 'proposed', 'agreed', 'rejec
     .icon-btn.danger:hover { color: var(--danger); }
     .task-body { position: relative; flex: 1; padding-right: 64px; }
     .task-actions { position: absolute; top: -4px; right: 0; }
+
+    .copilot { padding: 12px 14px; background: var(--surface-sunken); border-left: 3px solid #9db4ff; }
+    .copilot h3 { color: #9db4ff; }
+    .focus { display: flex; gap: 8px; margin: 6px 0 0; font-size: 14px; line-height: 1.45; }
+    .focus .k { flex: none; width: 38px; color: var(--text-muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; padding-top: 2px; }
+    .drift { display: flex; gap: 6px; align-items: flex-start; margin: 0 0 8px; color: #ffb020; font-size: 13.5px; app-icon { flex: none; margin-top: 2px; } }
+    .sub { margin: 12px 0 4px; color: var(--text-muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+    .plain { margin: 0; padding-left: 18px; font-size: 14px; line-height: 1.5; li { margin: 2px 0; } }
+    .qs li { color: #cfd9ff; }
+    .n.warn { background: rgba(255, 176, 32, 0.18); color: #ffcf73; }
+    .card.risk { border-left-color: #ffb020; }
+    .card.risk.sev-high { border-left-color: var(--danger); }
+    .card.risk.sev-low { border-left-color: #666; }
+    .risk-chip { color: #ffb020; }
+    .sev-high .risk-chip { color: var(--danger); }
+    .points { margin: 0; padding-left: 18px; font-size: 14.5px; line-height: 1.5; li { margin: 4px 0; } li.high { font-weight: 500; } li.struck { text-decoration: line-through; color: var(--text-muted); } }
+    .note { margin: -6px 0 8px; color: var(--text-muted); font-size: 13px; }
+    .tag { margin-left: 6px; padding: 0 6px; border: 1px solid var(--border); font-size: 11.5px; color: var(--text-muted); }
   `,
 })
 export class InsightsView {
@@ -275,6 +366,8 @@ export class InsightsView {
   /** Transcript lines for "Show sources" (only on the notes page). */
   readonly lines = input<TranscriptLine[]>([]);
   readonly compact = input(false);
+  /** In the meeting: show the live copilot. */
+  readonly live = input(false);
   /** Show edit/delete controls (notes page, after the meeting ended). */
   readonly editable = input(false);
   readonly editDecision = output<Decision>();
@@ -287,6 +380,21 @@ export class InsightsView {
     [...this.insights().decisions].sort((a, b) => STATUS_ORDER.indexOf(a.status) - STATUS_ORDER.indexOf(b.status)),
   );
   protected readonly openQuestions = computed(() => this.insights().openQuestions.filter((q) => q.status === 'open'));
+  protected readonly openRisks = computed(() => {
+    const rank = { high: 0, medium: 1, low: 2 } as const;
+    return (this.insights().risks ?? []).filter((r) => r.status === 'open').sort((a, b) => rank[a.severity] - rank[b.severity]);
+  });
+  protected readonly assumptions = computed(() => this.insights().assumptions ?? []);
+  protected readonly keyPoints = computed(() =>
+    [...(this.insights().keyPoints ?? [])].sort((a, b) => Number(b.importance === 'high') - Number(a.importance === 'high')),
+  );
+
+  protected riskLabel(k: string): string {
+    return (
+      { conflict: 'Conflict', dependency: 'Dependency', deadline: 'Risky deadline', blocker: 'Blocker', contradiction: 'Contradiction', other: 'Risk' }[k] ??
+      'Risk'
+    );
+  }
   private readonly bySeq = computed(() => new Map(this.lines().map((l) => [l.seq, l])));
 
   protected goalLabel(s: string): string {

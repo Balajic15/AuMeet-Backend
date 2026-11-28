@@ -1,3 +1,4 @@
+import mongoose from 'mongoose';
 import { MeetingInsightModel, TranscriptLineModel } from '../models/Insights.js';
 import { MemoryChunkModel } from '../models/MemoryChunk.js';
 import { deleteRecordings } from '../services/recording.js';
@@ -14,6 +15,8 @@ export async function purgeOldContent(days: number, now = new Date()) {
     MeetingInsightModel.deleteMany({ startedAt: { $lt: cutoff } }),
     MemoryChunkModel.deleteMany({ startedAt: { $lt: cutoff } }),
     deleteRecordings({ startedAt: { $lt: cutoff }, status: { $ne: 'active' } }),
+    mongoose.connection.collection('ai_corrections').deleteMany({ at: { $lt: cutoff } }),
+    mongoose.connection.collection('follow_actions').deleteMany({ createdAt: { $lt: cutoff } }),
   ]);
   return { transcripts: t.deletedCount, sessions: s.deletedCount, chunks: c.deletedCount, recordings: r };
 }

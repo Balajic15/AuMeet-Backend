@@ -33,6 +33,9 @@ import { generateMeetingCode, MEETING_CODE_RE } from '../utils/meetingCode.js';
 import { badRequest, conflict, forbidden, gone, notFound } from '../utils/httpError.js';
 import { env } from '../config/env.js';
 import { BehaviourOverride, Behaviour, defaultBehaviour, mergeLayers, resolve } from '../services/aiBehaviour.js';
+import { recordCorrections, type CorrectionKind } from '../services/feedback.js';
+import { FollowActionModel, type FollowAction } from '../models/FollowAction.js';
+import { executeAction, planFollowThrough, publicAction, reportTaskProgress } from '../services/followThrough.js';
 
 const router = Router();
 
@@ -480,6 +483,35 @@ const editedUpdate = (uid: string) => ({
   $unset: { memoryIndexedAt: 1, memoryAttempts: 1, memoryError: 1 },
 });
 
+type Item = { id: string; evidence?: number[] } & Record<string, unknown>;
+const itemsOf = (session: { insights?: unknown }, field: 'decisions' | 'actionItems' | 'openQuestions'): Item[] =>
+  ((session.insights as Record<string, Item[] | undefined> | null)?.[field] ?? []) as Item[];
+
+/** Feed the correction into the evaluation dataset (what the AI wrote → what people changed). */
+function captureCorrection(
+  req: Request,
+  meeting: MeetingDoc,
+  sessionId: string,
+  kind: CorrectionKind,
+  item: Item | null,
+  changes: Array<{ action: 'edit' | 'delete' | 'add'; field?: string; before: unknown; after: unknown }>,
+): Promise<void> {
+  return recordCorrections(
+    { hostId: meeting.host.toString(), meetingCode: meeting.code, sessionId, kind, by: req.auth!.sub, itemId: item?.id ?? null, evidenceSeqs: item?.evidence },
+    changes,
+  );
+}
+
+/** The fields that matter for learning (not ids, timestamps or evidence). */
+function summariseItem(item: Item | null) {
+  if (!item) return null;
+  const { id: _id, evidence: _e, firstSeenAt: _f, updatedAt: _u, ownerIdentity: _oi, ownerUserId: _ou, ...rest } = item;
+  return rest;
+}
+
+const nextItemId = (items: Item[], prefix: string) =>
+  `${prefix}${1 + items.reduce((m, x) => Math.max(m, Number(x.id.startsWith(prefix) ? x.id.slice(prefix.length) : 0) || 0), 0)}`;
+
 const DecisionEdit = z
   .object({
     statement: z.string().trim().min(1).max(500).optional(),
@@ -488,8 +520,9 @@ const DecisionEdit = z
   .refine((b) => Object.keys(b).length > 0, 'Nothing to update');
 
 router.patch('/:code/insights/:sessionId/decisions/:itemId', requireAuth, async (req, res) => {
-  const { session } = await editableSession(req);
+  const { meeting, session } = await editableSession(req);
   const body = DecisionEdit.parse(req.body);
+  const before = itemsOf(session, 'decisions').find((d) => d.id === String(req.params.itemId)) ?? null;
   const set: Record<string, unknown> = { 'insights.decisions.$[d].updatedAt': new Date().toISOString() };
   if (body.statement !== undefined) set['insights.decisions.$[d].statement'] = body.statement;
   if (body.status !== undefined) {
@@ -504,6 +537,10 @@ router.patch('/:code/insights/:sessionId/decisions/:itemId', requireAuth, async 
   );
   if (r.matchedCount === 0) throw notFound('Decision not found');
   await MeetingInsightModel.updateOne({ _id: session._id }, editedUpdate(req.auth!.sub));
+  await captureCorrection(
+    req, meeting, session.sessionId, 'decision', before,
+    (['statement', 'status'] as const).filter((f) => body[f] !== undefined).map((f) => ({ action: 'edit' as const, field: f, before: before?.[f], after: body[f] })),
+  );
   res.json({ ok: true });
 });
 
@@ -517,8 +554,9 @@ const TaskEdit = z
   .refine((b) => Object.keys(b).length > 0, 'Nothing to update');
 
 router.patch('/:code/insights/:sessionId/tasks/:itemId', requireAuth, async (req, res) => {
-  const { session } = await editableSession(req);
+  const { meeting, session } = await editableSession(req);
   const body = TaskEdit.parse(req.body);
+  const before = itemsOf(session, 'actionItems').find((a) => a.id === String(req.params.itemId)) ?? null;
   const p = 'insights.actionItems.$[t].';
   const set: Record<string, unknown> = { [p + 'updatedAt']: new Date().toISOString() };
   if (body.task !== undefined) set[p + 'task'] = body.task;
@@ -542,6 +580,18 @@ router.patch('/:code/insights/:sessionId/tasks/:itemId', requireAuth, async (req
   );
   if (r.matchedCount === 0) throw notFound('Task not found');
   await MeetingInsightModel.updateOne({ _id: session._id }, editedUpdate(req.auth!.sub));
+  // Ticking a task off is progress, not a correction of the AI.
+  await captureCorrection(
+    req, meeting, session.sessionId, 'task', before,
+    (['task', 'owner', 'dueDate'] as const)
+      .filter((f) => body[f] !== undefined)
+      .map((f) => ({ action: 'edit' as const, field: f, before: before?.[f] ?? null, after: body[f] ?? null })),
+  );
+  if (body.status && before && body.status !== before['status']) {
+    void reportTaskProgress(meeting.code, session.sessionId, {
+      id: before.id, task: body.task ?? String(before['task']), owner: (before['owner'] as string | null) ?? null, dueDate: (before['dueDate'] as string | null) ?? null,
+    }, body.status);
+  }
   res.json({ ok: true });
 });
 
@@ -550,11 +600,193 @@ router.delete('/:code/insights/:sessionId/:kind/:itemId', requireAuth, async (re
     String(req.params.kind)
   ];
   if (!field) throw notFound('Unknown item type');
-  const { session } = await editableSession(req);
+  const { meeting, session } = await editableSession(req);
+  const list = field.split('.')[1] as 'decisions' | 'actionItems' | 'openQuestions';
+  const before = itemsOf(session, list).find((x) => x.id === String(req.params.itemId)) ?? null;
   const r = await MeetingInsightModel.updateOne({ _id: session._id }, { $pull: { [field]: { id: String(req.params.itemId) } } });
   if (r.modifiedCount === 0) throw notFound('Item not found');
   await MeetingInsightModel.updateOne({ _id: session._id }, editedUpdate(req.auth!.sub));
+  const kind = ({ decisions: 'decision', actionItems: 'task', openQuestions: 'question' } as const)[list];
+  await captureCorrection(req, meeting, session.sessionId, kind, before, [{ action: 'delete', before: summariseItem(before), after: null }]);
   res.json({ ok: true });
+});
+
+// ---------- follow-through (actions the agent proposes after the meeting; host reviews them) ----------
+
+async function hostSession(req: Request) {
+  const meeting = await findByCode(req.params.code as string);
+  assertHost(req, meeting);
+  const session = await MeetingInsightModel.findOne({ meetingCode: meeting.code, sessionId: String(req.params.sessionId) }).lean();
+  if (!session) throw notFound('Session not found');
+  return { meeting, session };
+}
+
+router.get('/:code/insights/:sessionId/actions', requireAuth, async (req, res) => {
+  const { session } = await hostSession(req);
+  const actions = await FollowActionModel.find({ sessionId: session.sessionId }).sort({ createdAt: 1 }).lean();
+  res.json({
+    actions: actions.map((a) => publicAction(a as FollowAction)),
+    planned: !!(session as { followThroughPlannedAt?: Date }).followThroughPlannedAt,
+    canPlan: aiConfigured() && !!session.endedAt,
+    mail: mailConfigured(),
+  });
+});
+
+// Plan (or re-plan) now instead of waiting for the worker.
+router.post('/:code/insights/:sessionId/actions/plan', requireAuth, async (req, res) => {
+  const { session } = await hostSession(req);
+  if (!session.endedAt) throw conflict('Follow-ups are planned once the meeting has ended');
+  const result = await planFollowThrough(session.sessionId, getAi(), new Date(), true);
+  const actions = await FollowActionModel.find({ sessionId: session.sessionId }).sort({ createdAt: 1 }).lean();
+  res.json({ ...result, actions: actions.map((a) => publicAction(a as FollowAction)) });
+});
+
+const ActionDecision = z.object({
+  status: z.enum(['approved', 'dismissed']).optional(),
+  title: z.string().trim().min(1).max(300).optional(),
+  body: z.string().trim().max(5000).optional(),
+  when: z.coerce.date().optional(),
+});
+
+router.patch('/:code/insights/:sessionId/actions/:actionId', requireAuth, async (req, res) => {
+  const { session } = await hostSession(req);
+  const body = ActionDecision.parse(req.body);
+  const action = await FollowActionModel.findOne({ _id: String(req.params.actionId), sessionId: session.sessionId }).catch(() => null);
+  if (!action) throw notFound('Action not found');
+  if (action.status !== 'proposed' && !(action.status === 'approved' && !action.executedAt)) throw conflict('This action was already handled');
+  if (body.title !== undefined) action.title = body.title;
+  if (body.body !== undefined) action.body = body.body;
+  if (body.when !== undefined) action.when = body.when;
+  if (body.status) {
+    action.status = body.status;
+    action.decidedBy = req.auth!.sub;
+    action.decidedAt = new Date();
+  }
+  await action.save();
+  // Approving runs this action now – except a reminder, which waits for its day (the worker sends it).
+  if (action.status === 'approved' && (action.kind !== 'reminder' || !action.when || action.when <= new Date())) {
+    await executeAction(String(action._id));
+  }
+  const fresh = await FollowActionModel.findById(action._id).lean();
+  res.json({ action: publicAction(fresh as FollowAction) });
+});
+
+const MissedTask = z.object({
+  task: z.string().trim().min(1).max(500),
+  owner: z.string().trim().max(80).nullable().optional(),
+  dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+});
+
+// Add a task the AI missed.
+router.post('/:code/insights/:sessionId/tasks', requireAuth, async (req, res) => {
+  const { meeting, session } = await editableSession(req);
+  const body = MissedTask.parse(req.body);
+  const people = (session.participants as Array<{ identity?: string; name?: string; userId?: string | null }> | undefined) ?? [];
+  const match = body.owner ? people.find((x) => x.name?.toLowerCase() === body.owner!.toLowerCase()) : undefined;
+  const now = new Date().toISOString();
+  const item = {
+    id: nextItemId(itemsOf(session, 'actionItems'), 't'),
+    task: body.task,
+    owner: body.owner || null,
+    ownerIdentity: match?.identity ?? null,
+    ownerUserId: match?.userId ?? null,
+    deadline: null,
+    dueDate: body.dueDate ?? null,
+    status: 'open' as const,
+    evidence: [],
+    firstSeenAt: now,
+    updatedAt: now,
+    addedBy: req.auth!.sub,
+  };
+  await MeetingInsightModel.updateOne({ _id: session._id }, { $push: { 'insights.actionItems': item } });
+  await MeetingInsightModel.updateOne({ _id: session._id }, editedUpdate(req.auth!.sub));
+  await captureCorrection(req, meeting, session.sessionId, 'task', null, [
+    { action: 'add', before: null, after: { task: item.task, owner: item.owner, dueDate: item.dueDate } },
+  ]);
+  res.status(201).json({ item });
+});
+
+const MissedDecision = z.object({
+  statement: z.string().trim().min(1).max(500),
+  status: z.enum(['proposed', 'agreed', 'disputed', 'rejected']).default('agreed'),
+});
+
+// Add a decision the AI missed.
+router.post('/:code/insights/:sessionId/decisions', requireAuth, async (req, res) => {
+  const { meeting, session } = await editableSession(req);
+  const body = MissedDecision.parse(req.body);
+  const now = new Date().toISOString();
+  const item = {
+    id: nextItemId(itemsOf(session, 'decisions'), 'd'),
+    topic: '',
+    statement: body.statement,
+    status: body.status,
+    options: [],
+    proposedBy: [],
+    supporters: [],
+    objectors: [],
+    confirmationNeeded: null,
+    evidence: [],
+    firstSeenAt: now,
+    updatedAt: now,
+    settledAt: body.status === 'agreed' || body.status === 'rejected' ? now : null,
+    addedBy: req.auth!.sub,
+  };
+  await MeetingInsightModel.updateOne({ _id: session._id }, { $push: { 'insights.decisions': item } });
+  await MeetingInsightModel.updateOne({ _id: session._id }, editedUpdate(req.auth!.sub));
+  await captureCorrection(req, meeting, session.sessionId, 'decision', null, [
+    { action: 'add', before: null, after: { statement: item.statement, status: item.status } },
+  ]);
+  res.status(201).json({ item });
+});
+
+const SpeakerFix = z.object({
+  from: z.string().trim().min(1).max(80),
+  to: z.string().trim().min(1).max(80),
+  /** Only these lines (one misattributed line, say); every line of `from` when omitted. */
+  seqs: z.array(z.number().int().positive()).max(500).optional(),
+});
+
+/** Fix a wrongly identified speaker in the transcript (and, for a full rename, in the notes). */
+router.patch('/:code/insights/:sessionId/speakers', requireAuth, async (req, res) => {
+  const { meeting, session } = await editableSession(req);
+  const { from, to, seqs } = SpeakerFix.parse(req.body);
+  if (from === to) throw badRequest('Nothing to change');
+  const filter = { meetingCode: meeting.code, sessionId: session.sessionId, speakerName: from, ...(seqs ? { seq: { $in: seqs } } : {}) };
+  const sample = await TranscriptLineModel.find(filter).sort({ seq: 1 }).limit(5).select({ seq: 1 }).lean();
+  const r = await TranscriptLineModel.updateMany(filter, { $set: { speakerName: to, speakerCorrectedFrom: from } });
+  if (r.matchedCount === 0) throw notFound(`No lines by ${from}`);
+
+  if (!seqs) {
+    const swap = (v: unknown) => (v === from ? to : v);
+    const swapAll = (xs: unknown) => (Array.isArray(xs) ? xs.map(swap) : xs);
+    const ins = (session.insights ?? {}) as Record<string, unknown>;
+    await MeetingInsightModel.updateOne(
+      { _id: session._id },
+      {
+        $set: {
+          insights: {
+            ...ins,
+            decisions: itemsOf(session, 'decisions').map((d) => ({
+              ...d, proposedBy: swapAll(d['proposedBy']), supporters: swapAll(d['supporters']), objectors: swapAll(d['objectors']),
+            })),
+            actionItems: itemsOf(session, 'actionItems').map((a) => ({ ...a, owner: swap(a['owner']) })),
+            openQuestions: itemsOf(session, 'openQuestions').map((q) => ({ ...q, askedBy: swap(q['askedBy']) })),
+          },
+          participants: ((session.participants as Array<{ name?: string }> | undefined) ?? []).map((p) => ({ ...p, name: swap(p.name) })),
+        },
+      },
+    );
+  }
+  await MeetingInsightModel.updateOne({ _id: session._id }, editedUpdate(req.auth!.sub));
+  await recordCorrections(
+    {
+      hostId: meeting.host.toString(), meetingCode: meeting.code, sessionId: session.sessionId, kind: 'speaker', by: req.auth!.sub,
+      itemId: null, evidenceSeqs: sample.map((l) => l.seq ?? 0),
+    },
+    [{ action: 'edit', field: 'speakerName', before: from, after: to }],
+  );
+  res.json({ ok: true, lines: r.modifiedCount });
 });
 
 // ---------- documents for the AI (prepared before the meeting) ----------

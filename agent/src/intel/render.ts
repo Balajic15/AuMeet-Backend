@@ -39,5 +39,38 @@ export function renderNotes(i: Insights): string {
     for (const q of qs) lines.push(`- ${q.question}${q.askedBy ? ` (asked by ${q.askedBy})` : ''}`);
   }
 
+  const risks = (i.risks ?? []).filter((r) => r.status === 'open');
+  if (risks.length) {
+    lines.push('Risks and conflicts (open):');
+    for (const r of risks) {
+      let s = `- [${r.kind.toUpperCase()}, ${r.severity}] ${r.description}`;
+      if (r.earlier) s += ` – repeats/depends on "${r.earlier.text}" from ${r.earlier.date}`;
+      if (r.suggestedQuestion) s += ` (to clarify: ${r.suggestedQuestion})`;
+      lines.push(s);
+    }
+  }
+
+  const assumed = (i.assumptions ?? []).filter((a) => a.status === 'unverified');
+  if (assumed.length) {
+    lines.push('Unverified assumptions:');
+    for (const a of assumed) lines.push(`- ${a.statement}${a.madeBy ? ` (${a.madeBy})` : ''}`);
+  }
+
+  const points = (i.keyPoints ?? []).filter((k) => k.importance === 'high');
+  if (points.length) {
+    lines.push('Key points:');
+    for (const k of points) lines.push(`- ${k.point}`);
+  }
+
+  const c = i.copilot;
+  if (c) {
+    const parts: string[] = [];
+    if (c.currentFocus) parts.push(`Now discussing: ${c.currentFocus}${c.offTopic ? ` (OFF TOPIC${c.offTopicNote ? `: ${c.offTopicNote}` : ''})` : ''}`);
+    if (c.missingInfo.length) parts.push(`Missing information: ${c.missingInfo.join('; ')}`);
+    if (c.discussNext) parts.push(`Suggested next: ${c.discussNext}`);
+    if (c.agendaAdvice) parts.push(`Agenda advice: ${c.agendaAdvice}`);
+    if (parts.length) lines.push('Copilot view:', ...parts.map((x) => `- ${x}`));
+  }
+
   return lines.join('\n');
 }

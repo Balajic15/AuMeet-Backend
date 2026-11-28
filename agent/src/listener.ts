@@ -6,8 +6,8 @@ export interface ListenerEvents {
   onSpeechStart(): void;
   /** Voice activity ended (after the VAD's min silence duration). */
   onSpeechEnd(): void;
-  /** A complete utterance from this participant. */
-  onUtterance(text: string, language: string, speakerId: string | null): void;
+  /** A complete utterance from this participant, with how long they were actually talking (VAD). */
+  onUtterance(text: string, language: string, speakerId: string | null, speechMs: number): void;
   /** Words so far in the current utterance (for live captions); finals are included. */
   onPartial?(text: string): void;
 }
@@ -32,6 +32,9 @@ export class ParticipantListener {
   /** Diarized speaker of the buffered text (shared devices only). */
   private bufferSpeaker: string | null = null;
   private flushTimer: NodeJS.Timeout | null = null;
+  /** Voiced time since the last utterance, for speaking-time analytics. */
+  private voicedMs = 0;
+  private speechStartedAt: number | null = null;
 
   constructor(
     readonly participant: RemoteParticipant,
@@ -104,8 +107,14 @@ export class ParticipantListener {
     try {
       for await (const ev of this.vadStream) {
         if (this.closed) break;
-        if (ev.type === VADEventType.START_OF_SPEECH) this.events.onSpeechStart();
-        else if (ev.type === VADEventType.END_OF_SPEECH) this.events.onSpeechEnd();
+        if (ev.type === VADEventType.START_OF_SPEECH) {
+          this.speechStartedAt = Date.now();
+          this.events.onSpeechStart();
+        } else if (ev.type === VADEventType.END_OF_SPEECH) {
+          if (this.speechStartedAt !== null) this.voicedMs += Date.now() - this.speechStartedAt;
+          this.speechStartedAt = null;
+          this.events.onSpeechEnd();
+        }
       }
     } catch (err) {
       if (!this.closed) log().warn({ err }, 'VAD failed');
@@ -126,6 +135,11 @@ export class ParticipantListener {
     this.buffer = [];
     this.bufferLang = '';
     this.bufferSpeaker = null;
-    if (text) this.events.onUtterance(text, lang, speaker);
+    if (!text) return;
+    const now = Date.now();
+    const speechMs = this.voicedMs + (this.speechStartedAt !== null ? now - this.speechStartedAt : 0);
+    this.voicedMs = 0;
+    if (this.speechStartedAt !== null) this.speechStartedAt = now;
+    this.events.onUtterance(text, lang, speaker, speechMs);
   }
 }

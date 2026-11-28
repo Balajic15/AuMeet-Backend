@@ -118,6 +118,25 @@ const PAST = [
 ];
 
 const scenarios: Record<string, () => Promise<{ checks: Check[]; ms: number[] }>> = {
+  async 'risk: Friday commitment vs Monday dependency is flagged with a question'() {
+    const { notes, ms } = await analyse(script([
+      ['Asha', "I'll have the checkout page live by Friday."],
+      ['Ben', 'Just so you know, the payments API it needs only lands on Monday.'],
+      ['Chen', 'Okay. Next, the marketing email.'],
+      ['Asha', "Let's assume legal is fine with the new wording."],
+    ]));
+    const r = (notes.risks ?? []).find((x) => x.status === 'open' && (x.kind === 'conflict' || x.kind === 'dependency' || x.kind === 'deadline'));
+    return {
+      ms,
+      checks: [
+        check('the Friday/Monday clash is a risk', !!r && has(r.description, 'friday') && has(r.description, 'monday'), notes.risks),
+        check('it suggests a clarifying question', !!r?.suggestedQuestion, r),
+        check('the legal point is an assumption, not a decision', (notes.assumptions ?? []).some((a) => has(a.statement, 'legal')) && !notes.decisions.some((d) => has(d.statement, 'legal') && d.status === 'agreed'), notes),
+        check('the copilot names what is missing or what to discuss next', !!notes.copilot && (notes.copilot.missingInfo.length > 0 || !!notes.copilot.discussNext), notes.copilot),
+      ],
+    };
+  },
+
   async 'contradiction: reversing an earlier decision is flagged'() {
     const { notes, ms } = await analyse(script([
       ['Ben', 'Honestly, I think we should move billing to MongoDB instead.'],

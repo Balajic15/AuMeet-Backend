@@ -13,6 +13,10 @@ export const RecapOutput = z.object({
       summary: z.string().describe('One or two sentences: what was achieved against the goal and what is still missing, or ""'),
     })
     .optional(),
+  unfinished: z
+    .array(z.string())
+    .describe('Up to 6 things the meeting set out to do but did not finish: unfinished agenda items, unmet parts of the goal, unresolved conflicts')
+    .optional(),
 });
 export type RecapOutput = z.infer<typeof RecapOutput>;
 
@@ -21,7 +25,8 @@ Be faithful to the notes and transcript: never invent decisions, owners or dates
 Distinguish clearly between what was agreed and what is still open – an unresolved
 disagreement must be presented as unresolved, not as a decision.
 When a MEETING GOAL is given, judge it strictly: "met" only if the meeting clearly achieved it,
-"partly_met" if some of it was achieved, otherwise "not_met"; mention agenda items that were not covered.
+"partly_met" if some of it was achieved, otherwise "not_met"; mention agenda items that were not covered,
+and list what remains unfinished (unfinished agenda items, unmet parts of the goal, open conflicts and risks).
 Write in the language mostly used in the meeting. Plain text, no markdown.`;
 
 const MAX_TRANSCRIPT_CHARS = 60_000;

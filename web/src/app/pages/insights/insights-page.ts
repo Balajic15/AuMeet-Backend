@@ -19,14 +19,17 @@ import { InsightsView } from '../../shared/insights-view';
 import { Modal } from '../../shared/modal';
 import { ToastService } from '../../shared/toast';
 import { UserMenu } from '../../shared/user-menu';
+import { AuthService } from '../../core/auth.service';
+import { FollowThroughPanel } from './follow-through-panel';
+import { SessionAnalytics } from './session-analytics';
 
-type View = 'notes' | 'transcript';
+type View = 'notes' | 'transcript' | 'analytics' | 'follow';
 
 /** AI notes for one meeting: recap, decisions/tasks/questions (editable after the meeting), transcript. */
 @Component({
   selector: 'app-insights-page',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [Icon, InsightsView, RouterLink, UserMenu, Modal, FormsModule],
+  imports: [Icon, InsightsView, RouterLink, UserMenu, Modal, FormsModule, FollowThroughPanel, SessionAnalytics],
   templateUrl: './insights-page.html',
   styleUrl: './insights-page.scss',
 })
@@ -37,6 +40,7 @@ export class InsightsPage {
   private readonly title = inject(Title);
   private readonly toast = inject(ToastService);
   private readonly meetingsApi = inject(MeetingsService);
+  private readonly auth = inject(AuthService);
   protected readonly recordings = signal<RecordingInfo[]>([]);
 
   protected readonly loading = signal(true);
@@ -55,6 +59,17 @@ export class InsightsPage {
   protected decisionDraft = { statement: '', status: 'proposed' as DecisionStatus };
   protected taskDraft = { task: '', owner: '', dueDate: '', status: 'open' as 'open' | 'done' };
 
+  /** Adding what the AI missed / fixing a speaker. */
+  protected readonly adding = signal<'task' | 'decision' | null>(null);
+  protected addTaskDraft = { task: '', owner: '', dueDate: '' };
+  protected addDecisionDraft = { statement: '', status: 'agreed' as DecisionStatus };
+  protected readonly fixing = signal<TranscriptLine | null>(null);
+  protected speakerDraft = { to: '', all: false };
+  protected readonly isHost = computed(() => !!this.meeting() && this.meeting()!.hostId === this.auth.user()?.id);
+  protected readonly speakers = computed(() => [
+    ...new Set([...(this.session()?.participants ?? []), ...this.lines().filter((l) => !l.isAgent).map((l) => l.speakerName)]),
+  ]);
+
   protected readonly session = computed(() => this.sessions().find((s) => s.sessionId === this.selected()) ?? null);
   /** Notes become editable once the live note-taker is done with them. */
   protected readonly editable = computed(() => !!this.session()?.endedAt);
@@ -64,8 +79,8 @@ export class InsightsPage {
   });
 
   protected readonly statuses: { value: DecisionStatus; label: string }[] = [
-    { value: 'agreed', label: 'Agreed' },
-    { value: 'proposed', label: 'Proposed' },
+    { value: 'agreed', label: 'Confirmed decision' },
+    { value: 'proposed', label: 'Suggested (not settled)' },
     { value: 'disputed', label: 'Needs confirmation' },
     { value: 'rejected', label: 'Dropped' },
   ];
@@ -176,6 +191,53 @@ export class InsightsPage {
     const s = this.session();
     if (!s) return;
     await this.run(() => this.api.deleteItem(this.code(), s.sessionId, e.kind, e.id), 'Removed');
+  }
+
+  protected openAdd(kind: 'task' | 'decision'): void {
+    this.addTaskDraft = { task: '', owner: '', dueDate: '' };
+    this.addDecisionDraft = { statement: '', status: 'agreed' };
+    this.adding.set(kind);
+  }
+
+  protected async saveAdd(): Promise<void> {
+    const s = this.session();
+    const kind = this.adding();
+    if (!s || !kind) return;
+    if (kind === 'task') {
+      if (!this.addTaskDraft.task.trim()) return;
+      await this.run(() =>
+        this.api.addTask(this.code(), s.sessionId, {
+          task: this.addTaskDraft.task.trim(),
+          owner: this.addTaskDraft.owner.trim() || null,
+          dueDate: this.addTaskDraft.dueDate || null,
+        }),
+      );
+    } else {
+      if (!this.addDecisionDraft.statement.trim()) return;
+      await this.run(() =>
+        this.api.addDecision(this.code(), s.sessionId, { statement: this.addDecisionDraft.statement.trim(), status: this.addDecisionDraft.status }),
+      );
+    }
+    this.adding.set(null);
+  }
+
+  protected openFix(l: TranscriptLine): void {
+    if (!this.editable() || l.isAgent) return;
+    this.speakerDraft = { to: '', all: false };
+    this.fixing.set(l);
+  }
+
+  protected async saveFix(): Promise<void> {
+    const l = this.fixing();
+    const s = this.session();
+    const to = this.speakerDraft.to.trim();
+    if (!l || !s || !to || to === l.speakerName) return;
+    await this.run(
+      () => this.api.fixSpeaker(this.code(), s.sessionId, { from: l.speakerName, to, ...(this.speakerDraft.all ? {} : { seqs: [l.seq] }) }),
+      'Speaker corrected. The AI learns from this.',
+    );
+    await this.select(s.sessionId);
+    this.fixing.set(null);
   }
 
   private async run(fn: () => Promise<unknown>, done = 'Saved. The recap will refresh in a few minutes.'): Promise<void> {

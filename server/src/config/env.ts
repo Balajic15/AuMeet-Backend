@@ -17,6 +17,10 @@ const EnvSchema = z.object({
   REDIS_URL: z.string().optional(),
   // How often the worker looks for finished meetings to recap (fewer Redis commands = cheaper).
   MEMORY_SWEEP_SECONDS: z.coerce.number().int().min(30).default(300),
+  // Follow-through agent: how often due reminders and overdue tasks are checked.
+  FOLLOW_THROUGH_SWEEP_SECONDS: z.coerce.number().int().min(60).default(900),
+  // How often corrections to the AI notes are turned into lessons for the note-taker.
+  LEARN_SWEEP_SECONDS: z.coerce.number().int().min(300).default(3600),
   // Gemini – used by the worker (recaps, embeddings) and by "Ask your meetings".
   GOOGLE_API_KEY: z.string().optional(),
   // Fast models first (recaps, "Ask your meetings"); fallbacks when overloaded, over quota or slow.

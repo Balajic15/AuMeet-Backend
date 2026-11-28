@@ -72,6 +72,24 @@ People stay in control:
 - The host setting *"AI can speak up on its own"* (`aiProactive`, sent in the dispatch metadata).
 - Anyone can say "AuMeet, stay quiet" / "AuMeet, you can speak up again" (`proactivityCommand`).
 
+## Real-time intelligence & copilot
+
+On every run the note-taker also keeps:
+
+- **Key points**: important information that isn't a decision or task.
+- **Assumptions**: things treated as true but never confirmed, kept apart from decisions
+  (decisions show as *Confirmed*, *Suggested* or *Needs confirmation*).
+- **Risks & conflicts**: clashing commitments ("Friday" vs "the API lands Monday"), dependencies, unrealistic
+  deadlines, blockers and contradictions, each with a clarifying question. Open tasks and risks from earlier
+  sessions are given as `E1, E2, …` so repeated blockers are linked across meetings.
+- **Copilot** (live only, never spoken): current focus, off-topic flag, missing information, up to 3 questions to
+  ask, what to discuss next, and an agenda/time adjustment.
+
+The brain sees all of this and may raise a risk before the meeting ends (`watchFor.risks`).
+`lookup_commitments` lets the voice assistant answer "who owns…", "what did we decide…" and "what is pending"
+from earlier sessions of this meeting. **Lessons** (`src/lessons.ts`, `ai_lessons`) learned from the host's
+corrections are added to the note-taker's prompt. Speaking time per line (VAD) is stored for analytics.
+
 ## Memory of earlier sessions (`src/memory.ts`)
 
 When a meeting link is reused (a weekly stand-up, say), the AI starts with a brief of the last 3

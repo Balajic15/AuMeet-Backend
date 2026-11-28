@@ -11,6 +11,7 @@ import authRoutes from './routes/auth.js';
 import meetingRoutes from './routes/meetings.js';
 import memoryRoutes from './routes/memory.js';
 import aiRoutes from './routes/ai.js';
+import analyticsRoutes from './routes/analytics.js';
 import livekitWebhook from './routes/livekitWebhook.js';
 import { csrfGuard } from './middleware/auth.js';
 import { errorHandler, notFoundHandler } from './middleware/error.js';
@@ -66,11 +67,14 @@ export function createApp() {
   // Invitations send real email.
   app.use('/api/meetings/:code/invite', limiter(20));
   app.use('/api/meetings/:code/documents', limiter(60));
+  // Model calls: learning from corrections, analytics recommendations, re-planning follow-ups.
+  app.use(['/api/ai/feedback/learn', '/api/analytics/insights', '/api/meetings/:code/insights/:sessionId/actions/plan'], limiter(30));
   app.use('/api/meetings', meetingRoutes);
   // Each question costs an embedding + a model call.
   app.use('/api/memory/ask', limiter(40));
   app.use('/api/memory', memoryRoutes);
   app.use('/api/ai', aiRoutes);
+  app.use('/api/analytics', analyticsRoutes);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

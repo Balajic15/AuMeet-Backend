@@ -11,6 +11,8 @@ import { getAi } from './ai/gemini.js';
 import { findSessionsToProcess, processSession } from './memory/process.js';
 import { sendFollowUps } from './memory/followup.js';
 import { purgeOldContent } from './memory/retention.js';
+import { planFollowThrough, planOverdueNudges, runDueActions } from './services/followThrough.js';
+import { hostsToLearn, learnLessons } from './services/feedback.js';
 import { MEMORY_QUEUE, createMemoryQueue, enqueueSession, redisConnection, type ProcessSessionJob } from './queue.js';
 import { logger } from './logger.js';
 
@@ -23,6 +25,8 @@ async function main() {
   const queue = createMemoryQueue(env.REDIS_URL);
 
   await queue.upsertJobScheduler('sweep', { every: env.MEMORY_SWEEP_SECONDS * 1000 }, { name: 'sweep', opts: { removeOnComplete: true, removeOnFail: 50 } });
+  await queue.upsertJobScheduler('follow-through', { every: env.FOLLOW_THROUGH_SWEEP_SECONDS * 1000 }, { name: 'follow-through', opts: { removeOnComplete: true, removeOnFail: 50 } });
+  await queue.upsertJobScheduler('learn', { every: env.LEARN_SWEEP_SECONDS * 1000 }, { name: 'learn', opts: { removeOnComplete: true, removeOnFail: 50 } });
   if (env.DATA_RETENTION_DAYS > 0) {
     // Daily at 03:00 UTC.
     await queue.upsertJobScheduler('retention', { pattern: '0 3 * * *', tz: 'UTC' }, { name: 'retention', opts: { removeOnComplete: true, removeOnFail: 20 } });
@@ -37,6 +41,24 @@ async function main() {
         const res = await purgeOldContent(env.DATA_RETENTION_DAYS);
         logger.info({ ...res, days: env.DATA_RETENTION_DAYS }, 'retention: old meeting content deleted');
         return res;
+      }
+      if (job.name === 'follow-through') {
+        const sent = await runDueActions();
+        const nudged = await planOverdueNudges(ai);
+        if (sent || nudged) logger.info({ sent, nudged }, 'follow-through sweep');
+        return { sent, nudged };
+      }
+      if (job.name === 'learn') {
+        const hosts = await hostsToLearn();
+        for (const h of hosts) {
+          try {
+            await learnLessons(h, ai);
+          } catch (err) {
+            logger.warn({ err, host: h }, 'learning from corrections failed');
+          }
+        }
+        if (hosts.length) logger.info({ hosts: hosts.length }, 'lessons updated from corrections');
+        return { hosts: hosts.length };
       }
       if (job.name === 'sweep') {
         const ids = await findSessionsToProcess();
@@ -54,6 +76,13 @@ async function main() {
             if (mail.sent || mail.skipped !== 'already sent') logger.info({ sessionId, ...mail }, 'follow-up emails');
           } catch (err) {
             logger.warn({ err, sessionId }, 'follow-up emails failed');
+          }
+          // The follow-through agent proposes actions (host approves the external ones).
+          try {
+            const plan = await planFollowThrough(sessionId, ai);
+            if (plan.planned) logger.info({ sessionId, ...plan }, 'follow-through planned');
+          } catch (err) {
+            logger.warn({ err, sessionId }, 'follow-through planning failed');
           }
         }
         return res;

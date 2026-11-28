@@ -63,6 +63,10 @@
         <button type="button" role="tab" [class.active]="view() === 'transcript'" (click)="view.set('transcript')">
           Transcript <span class="count">{{ lines().length }}</span>
         </button>
+        <button type="button" role="tab" [class.active]="view() === 'analytics'" (click)="view.set('analytics')">Analytics</button>
+        @if (isHost() && s.endedAt) {
+          <button type="button" role="tab" [class.active]="view() === 'follow'" (click)="view.set('follow')">Follow-through</button>
+        }
         @if (lines().length) {
           <a class="download" [href]="downloadUrl()" download>
             <app-icon name="download" [size]="16" /> Download .txt
@@ -71,8 +75,15 @@
       </div>
     }
 
-    @if (view() === 'transcript') {
+    @if (view() === 'analytics' && session(); as s) {
+      <div class="panel"><app-session-analytics [sessionId]="s.sessionId" /></div>
+    } @else if (view() === 'follow' && session(); as s) {
+      <div class="panel"><app-follow-through-panel [code]="code()" [sessionId]="s.sessionId" /></div>
+    } @else if (view() === 'transcript') {
       <div class="panel">
+        @if (editable() && lines().length) {
+          <p class="edit-hint"><app-icon name="edit" [size]="14" /> Wrong speaker? Click a name to correct it.</p>
+        }
         @if (lines().length === 0) {
           <p class="none">No transcript for this session.</p>
         } @else {
@@ -80,7 +91,11 @@
             @for (l of lines(); track l.seq) {
               <li [class.ai]="l.isAgent">
                 <span class="t-time">{{ time(l.at) }}</span>
-                <span class="t-who">{{ l.isAgent ? 'AuMeet AI' : l.speakerName }}@if (l.channel === 'chat') { <em> (chat)</em> }</span>
+                @if (editable() && !l.isAgent) {
+                  <button type="button" class="t-who who-btn" title="Correct the speaker" (click)="openFix(l)">{{ l.speakerName }}@if (l.channel === 'chat') { <em> (chat)</em> }</button>
+                } @else {
+                  <span class="t-who">{{ l.isAgent ? 'AuMeet AI' : l.speakerName }}@if (l.channel === 'chat') { <em> (chat)</em> }</span>
+                }
                 <span class="t-text">{{ l.text }}</span>
               </li>
             }
@@ -112,6 +127,12 @@
                 <ul>@for (n of r.nextSteps; track $index) { <li>{{ n }}</li> }</ul>
               </div>
             }
+            @if (r.unfinished?.length) {
+              <div>
+                <h3>Not finished</h3>
+                <ul>@for (n of r.unfinished; track $index) { <li>{{ n }}</li> }</ul>
+              </div>
+            }
           </div>
         </section>
       } @else if (session()?.endedAt && !isEmpty(session()!.insights)) {
@@ -132,7 +153,13 @@
         </div>
       } @else {
         @if (editable()) {
-          <p class="edit-hint"><app-icon name="edit" [size]="14" /> Spot a mistake? Edit or delete any item. The recap updates automatically.</p>
+          <div class="edit-bar">
+            <p class="edit-hint"><app-icon name="edit" [size]="14" /> Spot a mistake? Edit, delete or add what the AI missed. It learns from every correction.</p>
+            <span class="add-btns">
+              <button type="button" class="btn btn-outline small" (click)="openAdd('task')"><app-icon name="plus" [size]="14" /> Task</button>
+              <button type="button" class="btn btn-outline small" (click)="openAdd('decision')"><app-icon name="plus" [size]="14" /> Decision</button>
+            </span>
+          </div>
         }
         <div class="panel">
           <app-insights-view [insights]="session()!.insights!" [lines]="lines()" [editable]="editable()"
@@ -197,6 +224,64 @@
         <button type="submit" class="btn btn-primary" [disabled]="saving() || !taskDraft.task.trim()">
           @if (saving()) { <span class="spinner"></span> } Save
         </button>
+      </div>
+    </form>
+  </app-modal>
+}
+
+@if (adding()) {
+  <app-modal [heading]="adding() === 'task' ? 'Add a missed task' : 'Add a missed decision'" (closed)="adding.set(null)">
+    <form (ngSubmit)="saveAdd()">
+      @if (adding() === 'task') {
+        <div class="field">
+          <label for="a-task">Task</label>
+          <textarea id="a-task" class="input area" rows="2" name="task" maxlength="500" [(ngModel)]="addTaskDraft.task"></textarea>
+        </div>
+        <div class="field">
+          <label for="a-owner">Owner</label>
+          <input id="a-owner" class="input" name="owner" list="people-add" maxlength="80" [(ngModel)]="addTaskDraft.owner" />
+          <datalist id="people-add">@for (p of speakers(); track p) { <option [value]="p"></option> }</datalist>
+        </div>
+        <div class="field">
+          <label for="a-due">Due date</label>
+          <input id="a-due" class="input" type="date" name="dueDate" [(ngModel)]="addTaskDraft.dueDate" />
+        </div>
+      } @else {
+        <div class="field">
+          <label for="a-dec">Decision</label>
+          <textarea id="a-dec" class="input area" rows="3" name="statement" maxlength="500" [(ngModel)]="addDecisionDraft.statement"></textarea>
+        </div>
+        <div class="field">
+          <label for="a-status">Status</label>
+          <select id="a-status" class="input" name="status" [(ngModel)]="addDecisionDraft.status">
+            @for (o of statuses; track o.value) { <option [value]="o.value">{{ o.label }}</option> }
+          </select>
+        </div>
+      }
+      <div class="dlg-actions">
+        <button type="button" class="btn btn-outline" (click)="adding.set(null)">Cancel</button>
+        <button type="submit" class="btn btn-primary" [disabled]="saving()">@if (saving()) { <span class="spinner"></span> } Add</button>
+      </div>
+    </form>
+  </app-modal>
+}
+
+@if (fixing(); as l) {
+  <app-modal heading="Who said this?" (closed)="fixing.set(null)">
+    <form (ngSubmit)="saveFix()">
+      <p class="quote">“{{ l.text }}”</p>
+      <div class="field">
+        <label for="f-to">Speaker</label>
+        <input id="f-to" class="input" name="to" list="people-fix" maxlength="80" [placeholder]="l.speakerName" [(ngModel)]="speakerDraft.to" />
+        <datalist id="people-fix">@for (p of speakers(); track p) { <option [value]="p"></option> }</datalist>
+      </div>
+      <label class="check">
+        <input type="checkbox" name="all" [(ngModel)]="speakerDraft.all" />
+        Every line attributed to {{ l.speakerName }} (a full rename, also in the notes)
+      </label>
+      <div class="dlg-actions">
+        <button type="button" class="btn btn-outline" (click)="fixing.set(null)">Cancel</button>
+        <button type="submit" class="btn btn-primary" [disabled]="saving() || !speakerDraft.to.trim()">@if (saving()) { <span class="spinner"></span> } Save</button>
       </div>
     </form>
   </app-modal>

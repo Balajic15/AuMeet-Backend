@@ -62,6 +62,7 @@ export async function processSession(
       goalOutcome: prep.goal && out.goalOutcome && out.goalOutcome.status !== 'no_goal'
         ? { status: out.goalOutcome.status, summary: out.goalOutcome.summary.trim() }
         : null,
+      unfinished: (out.unfinished ?? []).map((h) => h.trim()).filter(Boolean).slice(0, 6),
       generatedAt: now.toISOString(),
     };
 

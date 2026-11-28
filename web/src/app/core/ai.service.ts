@@ -22,7 +22,7 @@ export interface Behaviour {
   };
   engine?: Record<string, number>;
 }
-export type WatchKey = 'decisions' | 'owners' | 'disputes' | 'goal' | 'time' | 'followUps' | 'contradictions';
+export type WatchKey = 'decisions' | 'owners' | 'disputes' | 'goal' | 'time' | 'followUps' | 'contradictions' | 'risks';
 /** Any subset of the settings. */
 export type BehaviourOverride = Partial<Omit<Behaviour, 'watchFor' | 'limits' | 'engine'>> & {
   watchFor?: Partial<Behaviour['watchFor']>;
@@ -34,6 +34,31 @@ export interface LearningStat {
   engaged: number;
   ignored: number;
   rejected: number;
+}
+
+export interface FollowThroughSettings {
+  enabled: boolean;
+  autoApproveReminders: boolean;
+  overdueNotices: boolean;
+  webhookUrl: string | null;
+  autoSyncTasks: boolean;
+}
+
+export interface Lesson {
+  text: string;
+  topic: string;
+  support: number;
+  active: boolean;
+}
+
+export interface Feedback {
+  total: number;
+  mistakes: Array<{ kind: string; action: string; field: string | null; count: number; lastAt: string }>;
+  lessons: Lesson[];
+  disabled: string[];
+  learnedAt: string | null;
+  learnedFrom: number;
+  canLearn: boolean;
 }
 
 type Plain = Record<string, unknown>;
@@ -75,6 +100,32 @@ export class AiService {
   async resetLearning(): Promise<number> {
     return (await firstValueFrom(this.http.delete<{ deleted: number }>('/api/ai/learning'))).deleted;
   }
+
+  followThrough(): Promise<{ settings: FollowThroughSettings; mail: boolean }> {
+    return firstValueFrom(this.http.get<{ settings: FollowThroughSettings; mail: boolean }>('/api/ai/follow-through'));
+  }
+
+  saveFollowThrough(patch: Partial<FollowThroughSettings>): Promise<{ settings: FollowThroughSettings; mail: boolean }> {
+    return firstValueFrom(this.http.put<{ settings: FollowThroughSettings; mail: boolean }>('/api/ai/follow-through', patch));
+  }
+
+  feedback(): Promise<Feedback> {
+    return firstValueFrom(this.http.get<Feedback>('/api/ai/feedback'));
+  }
+
+  relearn(): Promise<Feedback> {
+    return firstValueFrom(this.http.post<Feedback>('/api/ai/feedback/learn', {}));
+  }
+
+  toggleLesson(text: string, active: boolean): Promise<Feedback> {
+    return firstValueFrom(this.http.patch<Feedback>('/api/ai/feedback/lessons', { text, active }));
+  }
+
+  async resetFeedback(): Promise<number> {
+    return (await firstValueFrom(this.http.delete<{ deleted: number }>('/api/ai/feedback'))).deleted;
+  }
+
+  readonly feedbackDatasetUrl = '/api/ai/feedback/dataset';
 
   meeting(code: string): Promise<{ account: Behaviour; meeting: BehaviourOverride | null; effective: Behaviour }> {
     return firstValueFrom(this.http.get<{ account: Behaviour; meeting: BehaviourOverride | null; effective: Behaviour }>(`/api/meetings/${code}/ai-behaviour`));

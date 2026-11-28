@@ -76,9 +76,16 @@
               (click)="tab.set('tasks'); loadOverview()">
         My tasks <span class="count">{{ openTaskCount() }}</span>
       </button>
+      <button type="button" role="tab" [attr.aria-selected]="tab() === 'team'" [class.active]="tab() === 'team'"
+              (click)="tab.set('team')">
+        Team
+      </button>
+      <a routerLink="/analytics" class="tab-link">Analytics</a>
     </div>
 
-    @if (tab() === 'tasks') {
+    @if (tab() === 'team') {
+      <app-team-commitments />
+    } @else if (tab() === 'tasks') {
       <app-my-tasks [tasks]="overview()?.tasks ?? []" [decisions]="overview()?.openDecisions ?? []"
                     (changed)="onTaskChanged($event)" />
     } @else if (loading()) {

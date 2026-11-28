@@ -67,8 +67,54 @@ export interface GoalProgress {
   since: string;
 }
 
+export interface KeyPoint {
+  id: string;
+  point: string;
+  importance: 'high' | 'normal';
+  evidence: number[];
+}
+
+export interface Assumption {
+  id: string;
+  statement: string;
+  madeBy: string | null;
+  status: 'unverified' | 'confirmed' | 'invalidated';
+  evidence: number[];
+}
+
+export type RiskKind = 'conflict' | 'dependency' | 'deadline' | 'blocker' | 'contradiction' | 'other';
+
+export interface Risk {
+  id: string;
+  kind: RiskKind;
+  description: string;
+  involves: string[];
+  relatedItems: string[];
+  earlier: { ref: string; kind: 'task' | 'risk'; text: string; date: string; title: string } | null;
+  severity: 'low' | 'medium' | 'high';
+  suggestedQuestion: string | null;
+  status: 'open' | 'resolved';
+  evidence: number[];
+}
+
+/** Live guidance from the copilot (replaced on every analysis). */
+export interface Copilot {
+  currentFocus: string;
+  offTopic: boolean;
+  offTopicNote: string;
+  missingInfo: string[];
+  suggestedQuestions: string[];
+  discussNext: string;
+  agendaAdvice: string;
+  updatedAt: string;
+}
+
 export interface Insights {
   summary: string;
+  keyPoints?: KeyPoint[];
+  assumptions?: Assumption[];
+  risks?: Risk[];
+  copilot?: Copilot | null;
   /** Only when the host prepared a goal / agenda (older notes may not have these). */
   goal?: GoalProgress | null;
   agenda?: AgendaProgress[];
@@ -93,6 +139,8 @@ export interface Recap {
   highlights: string[];
   nextSteps: string[];
   goalOutcome?: { status: 'met' | 'partly_met' | 'not_met'; summary: string } | null;
+  /** What the meeting set out to do but didn't finish. */
+  unfinished?: string[];
   generatedAt: string;
 }
 
@@ -116,8 +164,66 @@ export interface TranscriptLine {
   at: string;
 }
 
+export type FollowActionKind = 'email' | 'reminder' | 'calendar' | 'task_sync';
+
+export interface FollowAction {
+  id: string;
+  sessionId: string;
+  meetingCode: string;
+  meetingTitle?: string;
+  kind: FollowActionKind;
+  status: 'proposed' | 'approved' | 'done' | 'dismissed' | 'failed';
+  needsApproval: boolean;
+  taskId: string | null;
+  recipients: Array<{ name: string; userId: string | null }>;
+  title: string;
+  body: string;
+  when: string | null;
+  durationMinutes: number | null;
+  reason: string;
+  result: string | null;
+  error: string | null;
+  executedAt: string | null;
+  createdAt: string | null;
+}
+
+export interface ActionsResponse {
+  actions: FollowAction[];
+  planned: boolean;
+  canPlan: boolean;
+  mail: boolean;
+}
+
+export interface SpeakerStat {
+  name: string;
+  lines: number;
+  words: number;
+  seconds: number;
+  share: number;
+}
+
+export interface SessionMetrics {
+  sessionId: string;
+  meetingCode: string;
+  title: string;
+  startedAt: string | null;
+  durationMinutes: number;
+  participants: number;
+  speakers: SpeakerStat[];
+  balance: number | null;
+  agenda: { total: number; done: number; skipped: number; completion: number | null };
+  goal: string | null;
+  decisions: { total: number; agreed: number; open: number; avgMinutesToDecide: number | null };
+  tasks: { total: number; done: number; open: number; overdue: number; unowned: number; completion: number | null };
+  unresolved: number;
+  risks: number;
+}
+
 export function isEmptyInsights(i: Insights | null | undefined): boolean {
-  return !i || (!i.summary && !i.decisions?.length && !i.actionItems?.length && !i.openQuestions?.length);
+  return (
+    !i ||
+    (!i.summary && !i.decisions?.length && !i.actionItems?.length && !i.openQuestions?.length && !i.risks?.length && !i.copilot?.currentFocus)
+  );
 }
 
 @Injectable({ providedIn: 'root' })
@@ -143,6 +249,44 @@ export class InsightsService {
 
   deleteItem(code: string, sessionId: string, kind: 'decisions' | 'tasks' | 'questions', id: string): Promise<unknown> {
     return firstValueFrom(this.http.delete(`/api/meetings/${code}/insights/${encodeURIComponent(sessionId)}/${kind}/${encodeURIComponent(id)}`));
+  }
+
+  addTask(code: string, sessionId: string, body: { task: string; owner?: string | null; dueDate?: string | null }): Promise<unknown> {
+    return firstValueFrom(this.http.post(`${this.base(code, sessionId)}/tasks`, body));
+  }
+
+  addDecision(code: string, sessionId: string, body: { statement: string; status: DecisionStatus }): Promise<unknown> {
+    return firstValueFrom(this.http.post(`${this.base(code, sessionId)}/decisions`, body));
+  }
+
+  /** Correct a misidentified speaker (all their lines, or only `seqs`). */
+  fixSpeaker(code: string, sessionId: string, body: { from: string; to: string; seqs?: number[] }): Promise<{ lines: number }> {
+    return firstValueFrom(this.http.patch<{ lines: number }>(`${this.base(code, sessionId)}/speakers`, body));
+  }
+
+  actions(code: string, sessionId: string): Promise<ActionsResponse> {
+    return firstValueFrom(this.http.get<ActionsResponse>(`${this.base(code, sessionId)}/actions`));
+  }
+
+  planActions(code: string, sessionId: string): Promise<{ actions: FollowAction[] }> {
+    return firstValueFrom(this.http.post<{ actions: FollowAction[] }>(`${this.base(code, sessionId)}/actions/plan`, {}));
+  }
+
+  decideAction(
+    code: string,
+    sessionId: string,
+    id: string,
+    body: { status?: 'approved' | 'dismissed'; title?: string; body?: string; when?: string },
+  ): Promise<{ action: FollowAction }> {
+    return firstValueFrom(this.http.patch<{ action: FollowAction }>(`${this.base(code, sessionId)}/actions/${encodeURIComponent(id)}`, body));
+  }
+
+  sessionMetrics(sessionId: string): Promise<{ metrics: SessionMetrics }> {
+    return firstValueFrom(this.http.get<{ metrics: SessionMetrics }>(`/api/analytics/sessions/${encodeURIComponent(sessionId)}`));
+  }
+
+  private base(code: string, sessionId: string): string {
+    return `/api/meetings/${code}/insights/${encodeURIComponent(sessionId)}`;
   }
 
   /** Same-origin link; the session cookie authorises the download. */

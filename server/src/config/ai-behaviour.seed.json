@@ -11,7 +11,8 @@
     "goal": true,
     "time": true,
     "followUps": true,
-    "contradictions": true
+    "contradictions": true,
+    "risks": true
   },
   "customInstructions": "",
   "learnFromReactions": true,

@@ -98,13 +98,22 @@ export const AnswerOutput = z.object({
   sources: z.array(z.number().int()).describe('Numbers of the excerpts the answer relies on'),
 });
 
-export const ANSWER_SYSTEM = `You answer questions about a team's past meetings using ONLY the numbered excerpts.
-- If the excerpts don't contain the answer, say you couldn't find it in their meetings. Don't guess.
+export const ANSWER_SYSTEM = `You answer questions about a team's past meetings using ONLY the numbered excerpts and the STATUS LEDGER.
+- The STATUS LEDGER is the current, authoritative record of tasks (owner, due date, open/done/overdue), decisions
+  (agreed/proposed/disputed/rejected) and open risks. Use it for who owns what, deadlines, progress and what is pending;
+  use the excerpts for context and wording. Later meetings supersede earlier ones.
+- If neither contains the answer, say you couldn't find it in their meetings. Don't guess.
 - Be precise about status: say whether something was agreed, only proposed, or still unresolved.
 - Mention which meeting and date the answer comes from when useful.
 - Answer in the language of the question. Plain text, no markdown.`;
 
-export function answerPrompt(question: string, hits: MemoryHit[]): string {
+export function answerPrompt(question: string, hits: MemoryHit[], ledger = ''): string {
   const excerpts = hits.map((h, i) => `[${i + 1}] ${h.text}`).join('\n\n');
-  return `QUESTION: ${question}\n\nEXCERPTS:\n${excerpts}`;
+  return [
+    `QUESTION: ${question}`,
+    '',
+    'EXCERPTS:',
+    excerpts || '(none)',
+    ledger ? `\nSTATUS LEDGER (newest meetings first):\n${ledger}` : '',
+  ].join('\n');
 }

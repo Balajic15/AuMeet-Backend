@@ -41,7 +41,8 @@ import { SharedDeviceVoices } from './voices.js';
 import { emptyPrep, loadPrep, renderPrep, type MeetingPrep } from './prep.js';
 import { connectMongo } from './db.js';
 import { earlierSessionsBrief, historySearcher } from './memory.js';
-import { FOLLOW_UP_ITEM, loadContinuity, renderCarryover, type Continuity } from './carryover.js';
+import { FOLLOW_UP_ITEM, commitmentsLedger, loadContinuity, renderCarryover, type Continuity } from './carryover.js';
+import { loadLessons } from './lessons.js';
 import { z } from 'zod';
 import { MeetingAnalyzer } from './intel/analyzer.js';
 import { geminiAnalyzer } from './intel/gemini.js';
@@ -163,6 +164,8 @@ export default defineAgent<ProcData>({
     let behaviour: Behaviour | null = null;
     let hostId: string | null = null;
     let learning: IntentStats[] = [];
+    /** Lessons from this team's corrections of earlier notes (for the note-taker). */
+    let lessons: string[] = [];
     let isWake: (text: string) => boolean = () => false;
     const applyBehaviour = (b: Behaviour | null) => {
       behaviour = b;
@@ -179,6 +182,7 @@ export default defineAgent<ProcData>({
         applyBehaviour(r.behaviour);
         if (!r.behaviour) logger.error('no valid AI behaviour profile (ai_profiles/default) – the AI will only listen');
         if (hostId && r.behaviour?.learnFromReactions) learning = await loadLearning(mongo.db, hostId);
+        if (hostId) lessons = await loadLessons(mongo.db, hostId);
       } catch (err) {
         logger.warn({ err }, 'could not load AI behaviour');
       }
@@ -200,7 +204,7 @@ export default defineAgent<ProcData>({
     // ---------- memory of earlier sessions of this meeting link ----------
     let earlier = '';
     let prep: MeetingPrep = emptyPrep();
-    let continuity: Continuity = { carryover: null, pastDecisions: [] };
+    let continuity: Continuity = { carryover: null, pastDecisions: [], earlierItems: [] };
     /** This meeting link plus the meeting it follows up on (host's choice in Prepare). */
     const memoryCodes = () => [info.meetingCode, ...(prep.followUpOf ? [prep.followUpOf] : [])];
     const loadMemory = async () => {
@@ -249,6 +253,13 @@ export default defineAgent<ProcData>({
         dims: cfg.EMBEDDING_DIMS,
         meetingCode: memoryCodes,
       });
+      tools['lookup_commitments'] = llm.tool({
+        description:
+          'List decisions, tasks (owner, due date, open/done/overdue) and risks from earlier sessions of THIS meeting and the meeting ' +
+          'it follows up on. Use for "who owns …", "what did we decide about …", "what is still pending", "what progress was made".',
+        parameters: z.object({}),
+        execute: async () => (await commitmentsLedger(mongo!.db, memoryCodes(), ctx.job.id)) || 'No earlier sessions with notes.',
+      });
       tools['search_meeting_history'] = llm.tool({
         description:
           'Search earlier sessions of THIS meeting (and of the meeting it follows up on) for what was said, decided or assigned. ' +
@@ -295,7 +306,13 @@ export default defineAgent<ProcData>({
       transcript,
       analyze: geminiAnalyzer(structured),
       people: () => [...people.values()],
-      prep: () => ({ goal: prep.goal, agenda: trackedAgenda(), pastDecisions: continuity.pastDecisions }),
+      prep: () => ({
+        goal: prep.goal,
+        agenda: trackedAgenda(),
+        pastDecisions: continuity.pastDecisions,
+        earlierItems: continuity.earlierItems,
+        lessons,
+      }),
       ...(behaviour
         ? {
             batchSize: (behaviour as Behaviour).engine.analysisBatchLines,
@@ -416,7 +433,7 @@ export default defineAgent<ProcData>({
       }
     };
 
-    const onUtterance = async (p: RemoteParticipant, text: string, language: string, voice: string | null = null) => {
+    const onUtterance = async (p: RemoteParticipant, text: string, language: string, voice: string | null = null, speechMs = 0) => {
       const now = Date.now();
       // On a shared device each voice is its own speaker ("Room laptop (voice 2)" or the name they gave).
       const who = voices.label(p.identity, nameOf(p), voice, text);
@@ -431,6 +448,7 @@ export default defineAgent<ProcData>({
         text,
         language,
         at: now,
+        ...(speechMs > 0 ? { durationMs: speechMs } : {}),
       });
       await appendToContext('user', `${who}: ${text}`);
       analyzer.notify();
@@ -571,9 +589,9 @@ export default defineAgent<ProcData>({
           onSpeechStart: () => onSpeechStart(p),
           onSpeechEnd: () => moderator.humanSpeechEnded(p.identity),
           onPartial: (text) => sendCaption(p, text, false),
-          onUtterance: (text, lang, voice) => {
+          onUtterance: (text, lang, voice, speechMs) => {
             sendCaption(p, text, true);
-            void onUtterance(p, text, lang, voice);
+            void onUtterance(p, text, lang, voice, speechMs);
           },
         }),
       );

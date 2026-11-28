@@ -47,7 +47,7 @@ export type PanelTab = 'chat' | 'people' | 'insights';
           @if (isEmpty(ins)) {
             <p class="hint">Nothing noted yet. Decisions, tasks and open questions appear here as the meeting goes.</p>
           } @else {
-            <app-insights-view [insights]="ins" [compact]="true" />
+            <app-insights-view [insights]="ins" [compact]="true" [live]="true" />
           }
         } @else if (room.hasAgent()) {
           <p class="hint">AuMeet AI is listening. Decisions, tasks and open questions will appear here as the conversation develops.</p>

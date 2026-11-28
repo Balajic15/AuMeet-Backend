@@ -34,7 +34,7 @@ describe('InsightsView', () => {
     const f = await render({ insights: notes });
     const el = f.nativeElement as HTMLElement;
     const chips = [...el.querySelectorAll('.chip')].map((c) => c.textContent?.trim());
-    expect(chips).toEqual(['Needs confirmation', 'Agreed']);
+    expect(chips).toEqual(['Needs confirmation', 'Confirmed']);
     expect(el.textContent).toContain('MongoDB');
     expect(el.querySelector('.ask')?.textContent).toContain('Can we confirm which database?');
     expect(el.querySelector('.unassigned')?.textContent?.trim()).toBe('No owner');
@@ -107,5 +107,30 @@ describe('InsightsView – goal and agenda', () => {
     const plain = (await render({ insights: notes })).nativeElement as HTMLElement;
     expect(plain.querySelector(".carry")).toBeNull();
     expect(plain.querySelector(".conflict")).toBeNull();
+  });
+
+  it('shows the live copilot only in the meeting, plus risks, assumptions and key points', async () => {
+    const live: Insights = {
+      ...notes,
+      copilot: {
+        currentFocus: 'Holiday plans', offTopic: true, offTopicNote: 'drifted to holidays', missingInfo: ['Owner for the schema'],
+        suggestedQuestions: ['Who drafts the schema?'], discussNext: 'Back to the database choice', agendaAdvice: '', updatedAt: '',
+      },
+      risks: [{
+        id: 'r1', kind: 'conflict', description: 'Asha commits to Friday but the API arrives Monday', involves: ['Asha', 'Ben'], relatedItems: [],
+        earlier: null, severity: 'high', suggestedQuestion: 'Can it ship without the API?', status: 'open', evidence: [],
+      }],
+      assumptions: [{ id: 's1', statement: 'The client accepts a delay', madeBy: 'Ben', status: 'unverified', evidence: [] }],
+      keyPoints: [{ id: 'k1', point: 'Churn rose 4%', importance: 'high', evidence: [] }],
+    };
+    const inRoom = (await render({ insights: live, live: true })).nativeElement as HTMLElement;
+    expect(inRoom.querySelector('.copilot')?.textContent).toContain('Off topic: drifted to holidays');
+    expect(inRoom.querySelector('.copilot')?.textContent).toContain('Who drafts the schema?');
+    expect(inRoom.querySelector('.risk')?.textContent).toContain('Can it ship without the API?');
+    expect(inRoom.textContent).toContain('The client accepts a delay');
+    expect(inRoom.textContent).toContain('Churn rose 4%');
+    const page = (await render({ insights: live })).nativeElement as HTMLElement;
+    expect(page.querySelector('.copilot')).toBeNull();
+    expect(page.querySelector('.risk')).not.toBeNull();
   });
 });

@@ -31,6 +31,7 @@ const WatchFor = z.object({
   time: z.boolean(),
   followUps: z.boolean(),
   contradictions: z.boolean(),
+  risks: z.boolean(),
 });
 
 export const Behaviour = z.object({
@@ -81,11 +82,25 @@ export function mergeLayers(...layers: unknown[]): Plain {
 
 const profiles = () => mongoose.connection.collection<{ _id: string } & Plain>('ai_profiles');
 
-/** Fill an empty database with the seed profile (never overwrites an edited one). */
+/**
+ * Fill an empty database with the seed profile. An existing profile is never overwritten; settings added
+ * in a newer version (missing from the stored profile) are filled in from the seed.
+ */
 export async function ensureDefaultProfile(): Promise<void> {
   const valid = Behaviour.parse(seed);
   const res = await profiles().updateOne({ _id: 'default' }, { $setOnInsert: valid }, { upsert: true });
-  if (res.upsertedCount) logger.info('AI behaviour: default profile created from the seed');
+  if (res.upsertedCount) {
+    logger.info('AI behaviour: default profile created from the seed');
+    return;
+  }
+  const doc = await profiles().findOne({ _id: 'default' });
+  const { _id: _ignored, ...stored } = (doc ?? {}) as Plain;
+  if (Behaviour.safeParse(stored).success) return;
+  const filled = Behaviour.safeParse(mergeLayers(valid, stored));
+  if (filled.success) {
+    await profiles().replaceOne({ _id: 'default' }, filled.data);
+    logger.info('AI behaviour: new settings added to the stored default profile');
+  }
 }
 
 export async function defaultBehaviour(): Promise<Behaviour> {
