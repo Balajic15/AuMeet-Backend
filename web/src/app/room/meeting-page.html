@@ -99,7 +99,17 @@
               <div class="screen-label">
                 <app-icon name="monitor" [size]="14" />
                 {{ presenter.isLocal ? 'You are presenting' : presenter.name + ' is presenting' }}
+                @if (rs.screenSeenBy()) {
+                  <span class="ai-sees" title="The AI analyses this screen when it changes or when asked">
+                    <app-icon name="sparkles" [size]="12" /> {{ rs.agentName() }} can see this screen
+                  </span>
+                }
                 @if (presenter.isLocal) {
+                  @if (rs.screenAiAllowed()) {
+                    <button type="button" class="stop-share" (click)="rs.setScreenAi(false)">Hide from AI</button>
+                  } @else if (rs.hasAgent()) {
+                    <button type="button" class="stop-share" (click)="screenConsent.set(true)">Let AI see</button>
+                  }
                   <button type="button" class="stop-share" (click)="toggleScreen()">Stop presenting</button>
                 }
               </div>
@@ -225,6 +235,20 @@
         <div class="dlg-actions">
           <button type="button" class="btn btn-outline" (click)="removing.set(null)">Cancel</button>
           <button type="button" class="btn btn-danger" (click)="confirmRemove()">Remove</button>
+        </div>
+      </app-modal>
+    }
+
+    @if (screenConsent()) {
+      <app-modal heading="Let the AI see your screen?" (closed)="answerScreenConsent(false)">
+        <p class="dlg-text">
+          {{ rs.agentName() }} can look at what you share to understand the discussion – for example an error you are showing –
+          and capture a screenshot only when someone asks for it. It looks when the screen changes or someone asks, not
+          continuously. Everyone sees an indicator while it can see your screen, and you can turn it off at any time.
+        </p>
+        <div class="dlg-actions">
+          <button type="button" class="btn btn-outline" (click)="answerScreenConsent(false)">Not now</button>
+          <button type="button" class="btn btn-primary" (click)="answerScreenConsent(true)">Allow</button>
         </div>
       </app-modal>
     }

@@ -7,6 +7,7 @@ const base: Behaviour = {
   name: 'Maaya', wakeWords: ['Maya'], talkativeness: 0.5, tone: 'neutral', replyLength: 'brief',
   watchFor: { decisions: true, owners: true, disputes: true, goal: true, time: true, followUps: true, contradictions: true, risks: true },
   customInstructions: '', learnFromReactions: true, copilot: { enabled: true, minRelevance: 0.6, maxSuggestions: 4 },
+  screen: { enabled: true, minIntervalSeconds: 20, maxPerTenMinutes: 12, changeThreshold: 0.08, maxSide: 1280 },
   limits: { minGapSeconds: 60, maxPerTenMinutes: 4, pauseMs: 1800, warmupSeconds: 20, repeatTopicMinutes: 15, minCheckSeconds: 8 },
   engine: { contextLines: 30 },
 };

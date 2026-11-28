@@ -41,6 +41,14 @@ const Copilot = z.object({
   maxSuggestions: z.number().int().min(1).max(8),
 });
 
+const Screen = z.object({
+  enabled: z.boolean(),
+  minIntervalSeconds: z.number().int().min(3).max(600),
+  maxPerTenMinutes: z.number().int().min(1).max(120),
+  changeThreshold: z.number().min(0.01).max(0.9),
+  maxSide: z.number().int().min(480).max(2048),
+});
+
 export const Behaviour = z.object({
   name: z.string().trim().min(1).max(30),
   wakeWords: z.array(z.string().trim().min(2).max(40)).max(30),
@@ -51,6 +59,7 @@ export const Behaviour = z.object({
   customInstructions: z.string().max(2000),
   learnFromReactions: z.boolean(),
   copilot: Copilot,
+  screen: Screen,
   limits: Limits,
   engine: Engine,
 });
@@ -68,6 +77,7 @@ export const BehaviourOverride = z
     customInstructions: Behaviour.shape.customInstructions,
     learnFromReactions: Behaviour.shape.learnFromReactions,
     copilot: Copilot.partial(),
+    screen: Screen.partial(),
     limits: Limits.partial(),
   })
   .partial()

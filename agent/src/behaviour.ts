@@ -38,6 +38,16 @@ export const Behaviour = z.object({
       maxSuggestions: z.number().int().min(1).max(8),
     })
     .optional(),
+  /** Understanding shared screens (only with the sharer's consent): cost and frequency limits. */
+  screen: z
+    .object({
+      enabled: z.boolean(),
+      minIntervalSeconds: z.number().int().min(3).max(600),
+      maxPerTenMinutes: z.number().int().min(1).max(120),
+      changeThreshold: z.number().min(0.01).max(0.9),
+      maxSide: z.number().int().min(480).max(2048),
+    })
+    .optional(),
   /** Free text from the host, e.g. "Mostly speak Hindi", "Be very brief", "Never joke". */
   customInstructions: z.string().max(2000),
   /** Use how this team reacted to earlier remarks. */

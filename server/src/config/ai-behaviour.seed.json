@@ -16,6 +16,13 @@
   },
   "customInstructions": "",
   "learnFromReactions": true,
+  "screen": {
+    "enabled": true,
+    "minIntervalSeconds": 20,
+    "maxPerTenMinutes": 12,
+    "changeThreshold": 0.08,
+    "maxSide": 1280
+  },
   "copilot": {
     "enabled": true,
     "minRelevance": 0.6,

@@ -449,14 +449,27 @@ export class MeetingPage implements OnDestroy {
     }
   }
 
+  /** "Let the AI see your screen?" after starting to share. */
+  protected readonly screenConsent = signal(false);
+
+  protected async answerScreenConsent(allow: boolean): Promise<void> {
+    this.screenConsent.set(false);
+    await this.rs.setScreenAi(allow);
+    this.toast.show(allow ? `${this.rs.agentName()} can now see your shared screen` : 'Your screen stays private from the AI');
+  }
+
   protected async toggleScreen(): Promise<void> {
     const other = this.rs.screenShare();
     if (other && !other.isLocal) {
       this.toast.show(`${other.name} is already presenting`);
       return;
     }
+    const starting = !this.rs.screenOn();
     try {
       await this.rs.toggleScreen();
+      // Ask once per share whether the AI may look at it; nothing is analysed without a yes.
+      if (starting && this.rs.screenOn() && this.rs.hasAgent()) this.screenConsent.set(true);
+      if (!starting) void this.rs.setScreenAi(false);
     } catch (e) {
       // NotAllowedError = user closed the picker; nothing to report.
       if ((e as Error)?.name !== 'NotAllowedError') this.toast.error('Screen sharing is not available in this browser.');

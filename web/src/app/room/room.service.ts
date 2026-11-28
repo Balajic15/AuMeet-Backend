@@ -23,6 +23,8 @@ export const REACTION_TOPIC = 'aumeet.reaction';
 /** Participant attributes (set by each person for themselves). */
 export const HAND_ATTR = 'aumeet.hand';
 export const TRANSCRIBE_ATTR = 'aumeet.transcribe';
+/** 'on' = I allow the AI to see my shared screen (asked when I start sharing). */
+export const SCREEN_ATTR = 'aumeet.screenAi';
 /** '1' = several people speak through this device (the AI separates their voices). */
 export const SHARED_ATTR = 'aumeet.shared';
 
@@ -40,6 +42,8 @@ export interface ParticipantView {
   handRaised: boolean;
   /** False when the person opted out of AI transcription. */
   transcribed: boolean;
+  /** Allowed the AI to see their shared screen. */
+  screenAi: boolean;
   sharedDevice: boolean;
   camera?: VideoTrack;
   screen?: VideoTrack;
@@ -123,6 +127,7 @@ function toView(p: Participant, isLocal: boolean, hostIdentity: string | null): 
     camOn: !!cam?.track && !cam.isMuted,
     handRaised: p.attributes?.[HAND_ATTR] === '1',
     transcribed: p.attributes?.[TRANSCRIBE_ATTR] !== 'off',
+    screenAi: p.attributes?.[SCREEN_ATTR] === 'on',
     sharedDevice: p.attributes?.[SHARED_ATTR] === '1',
     camera: cam?.track && !cam.isMuted ? (cam.track as VideoTrack) : undefined,
     screen: screen?.track && !screen.isMuted ? (screen.track as VideoTrack) : undefined,
@@ -329,6 +334,20 @@ export class RoomService implements OnDestroy {
   }
 
   /** Throws if the user cancels the browser's share picker – callers can ignore that. */
+  /** Whether I allowed the AI to look at my shared screen. */
+  readonly screenAiAllowed = signal(false);
+
+  async setScreenAi(on: boolean): Promise<void> {
+    this.screenAiAllowed.set(on);
+    await this.room.localParticipant.setAttributes({ [SCREEN_ATTR]: on ? 'on' : 'off' });
+  }
+
+  /** The presenter, when they let the AI see their screen and the AI is in the room (everyone sees an indicator). */
+  readonly screenSeenBy = computed(() => {
+    const share = this.screenShare();
+    return share && share.screenAi && this.hasAgent() ? share : null;
+  });
+
   async toggleScreen(): Promise<void> {
     await this.room.localParticipant.setScreenShareEnabled(!this.screenOn(), { audio: true });
     this.refresh();

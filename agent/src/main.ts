@@ -36,6 +36,8 @@ import { loadBehaviour, wakeMatcher, type Behaviour } from './behaviour.js';
 import { loadLearning, recordReaction, type IntentStats } from './learning.js';
 import { AGENT_DISPLAY_NAME, config, tileName } from './config.js';
 import { verifyParticipant } from './identity.js';
+import { ScreenWatcher } from './screen/watcher.js';
+import { renderScreen, ScreenIntel, type ScreenPolicy } from './screen/vision.js';
 import { fence } from './untrusted.js';
 import { languageName, voiceLanguage } from './language.js';
 import { ParticipantListener } from './listener.js';
@@ -98,6 +100,9 @@ const userIdOf = (p: RemoteParticipant): string | null => who(p).userId;
 const isHuman = (p: RemoteParticipant) => p.kind !== ParticipantKind.AGENT;
 const transcribeAllowed = (p: RemoteParticipant) => p.attributes?.[TRANSCRIBE_ATTR] !== 'off';
 const isSharedDevice = (p: RemoteParticipant) => p.attributes?.[SHARED_ATTR] === '1';
+/** Participant attribute: 'on' = this person allowed the AI to see their shared screen (asked when they share). */
+const SCREEN_ATTR = 'aumeet.screenAi';
+const screenAllowed = (p: RemoteParticipant) => p.attributes?.[SCREEN_ATTR] === 'on' && transcribeAllowed(p);
 const nameOf = (p: RemoteParticipant) => who(p).name;
 
 export default defineAgent<ProcData>({
@@ -294,6 +299,20 @@ export default defineAgent<ProcData>({
         },
       });
     }
+    tools['look_at_screen'] = llm.tool({
+      description:
+        'Look at the screen someone is sharing right now (only works when they allowed it). Use when someone asks you to look ' +
+        'at something, refers to what is on screen ("this error", "this button"), or wants your view on what they show.',
+      parameters: z.object({}),
+      execute: async () => {
+        const w = [...screenWatchers.values()][0];
+        if (!w || !w.watcher.latest) return 'Nobody is sharing a screen that you are allowed to see.';
+        const obs = await screenIntel.analyse(w.watcher.latest, w.name, 'request');
+        w.watcher.markAnalysed();
+        const view = obs ?? screenIntel.latest;
+        return view ? fence('SHARED SCREEN', renderScreen({ sharing: w.name, observations: [view] }, 1)) : 'I could not look at the screen just now.';
+      },
+    });
     tools['set_speaking_mode'] = llm.tool({
       description:
         'Switch whether you speak up on your own. Use when someone asks you to stay quiet / stop interrupting ("quiet"), ' +
@@ -384,6 +403,57 @@ export default defineAgent<ProcData>({
     let lastLanguage = 'en';
     const agentIdle = () => session.agentState === 'listening' || session.agentState === 'idle';
     const presentNames = () => [...ctx.room.remoteParticipants.values()].filter(isHuman).map(nameOf);
+
+    // ---------- shared screens (consent-based) ----------
+    const screenPolicy = (): ScreenPolicy => ({
+      enabled: true, minIntervalSeconds: 20, maxPerTenMinutes: 12, changeThreshold: 0.08, maxSide: 1280,
+      ...((behaviour as Behaviour | null)?.screen ?? {}),
+    });
+    const screenIntel = new ScreenIntel({
+      call: structured,
+      policy: screenPolicy,
+      transcript: () => transcript.all,
+      onUpdate: (state) => {
+        const updated = analyzer.setScreen(state);
+        void sendInsights(updated);
+        // Maaya's answers use what is on screen right away.
+        latestNotes = renderNotes(updated);
+        void refreshInstructions();
+        store?.save(updated, [...people.values()]).catch(() => {});
+      },
+      onError: (err) => logger.warn({ err }, 'screen analysis failed'),
+    });
+    const screenWatchers = new Map<string, { watcher: ScreenWatcher; name: string }>();
+    const stopWatching = (identity: string) => {
+      const w = screenWatchers.get(identity);
+      if (!w) return;
+      w.watcher.close();
+      screenWatchers.delete(identity);
+      screenIntel.setSharing([...screenWatchers.values()][0]?.name ?? null);
+    };
+    /** Subscribe to a screen share only when its owner allowed the AI to see it. */
+    const syncScreen = (p: RemoteParticipant) => {
+      if (!isHuman(p)) return;
+      for (const pub of p.trackPublications.values()) {
+        if (pub.source !== TrackSource.SOURCE_SCREENSHARE) continue;
+        const want = screenAllowed(p) && screenPolicy().enabled;
+        if (pub.subscribed !== want) pub.setSubscribed(want);
+        if (!want) stopWatching(p.identity);
+      }
+    };
+    const watchScreen = (track: RemoteTrack, p: RemoteParticipant) => {
+      if (!screenAllowed(p)) return;
+      stopWatching(p.identity);
+      const name = nameOf(p);
+      const watcher = new ScreenWatcher(track, {
+        sampleMs: 1000,
+        changeThreshold: () => screenPolicy().changeThreshold,
+        onChange: async (img) => !!(await screenIntel.analyse(img, name, 'change')),
+      });
+      screenWatchers.set(p.identity, { watcher, name });
+      screenIntel.setSharing(name);
+      logger.info({ who: p.identity }, 'watching shared screen (allowed by the sharer)');
+    };
     const moderator = new Moderator({
       enabled: info.proactive,
       title: info.title,
@@ -739,13 +809,22 @@ export default defineAgent<ProcData>({
 
     ctx.room
       .on(RoomEvent.TrackSubscribed, (track, pub, p) => {
+        if (pub.source === TrackSource.SOURCE_SCREENSHARE && track.kind === TrackKind.KIND_VIDEO) return watchScreen(track, p);
         listen(track, pub, p);
         greetOnce();
       })
+      .on(RoomEvent.TrackPublished, (pub, p) => {
+        if (pub.source === TrackSource.SOURCE_SCREENSHARE) syncScreen(p);
+      })
+      .on(RoomEvent.TrackUnpublished, (pub, p) => {
+        if (pub.source === TrackSource.SOURCE_SCREENSHARE) stopWatching(p.identity);
+      })
       .on(RoomEvent.ParticipantAttributesChanged, (changed, p) => {
-        if (!(TRANSCRIBE_ATTR in changed || SHARED_ATTR in changed) || p.identity === ctx.room.localParticipant?.identity) return;
+        if (!(TRANSCRIBE_ATTR in changed || SHARED_ATTR in changed || SCREEN_ATTR in changed) || p.identity === ctx.room.localParticipant?.identity) return;
         const rp = ctx.room.remoteParticipants.get(p.identity);
         if (!rp) return;
+        if (SCREEN_ATTR in changed || TRANSCRIBE_ATTR in changed) syncScreen(rp);
+        if (!(TRANSCRIBE_ATTR in changed || SHARED_ATTR in changed)) return;
         if (SHARED_ATTR in changed) voices.forget(rp.identity);
         if (transcribeAllowed(rp)) relisten(rp); // also switches diarization on/off
         else stopListening(rp.identity);
@@ -753,6 +832,7 @@ export default defineAgent<ProcData>({
       .on(RoomEvent.RoomMetadataChanged, (metadata) => applyRoomSettings(metadata))
       .on(RoomEvent.TrackUnsubscribed, (_track, pub, p) => {
         if (pub.source === TrackSource.SOURCE_MICROPHONE) stopListening(p.identity);
+        if (pub.source === TrackSource.SOURCE_SCREENSHARE) stopWatching(p.identity);
       })
       .on(RoomEvent.ParticipantConnected, (p) => {
         if (emptyTimer) clearTimeout(emptyTimer);
@@ -765,6 +845,7 @@ export default defineAgent<ProcData>({
       })
       .on(RoomEvent.ParticipantDisconnected, (p) => {
         stopListening(p.identity);
+        stopWatching(p.identity);
         moderator.participantLeft(p.identity);
         if (!humansPresent() && !emptyTimer) {
           emptyTimer = setTimeout(() => {
@@ -779,6 +860,7 @@ export default defineAgent<ProcData>({
       if (emptyTimer) clearTimeout(emptyTimer);
       moderator.stop();
       for (const l of listeners.values()) l.close();
+      for (const id of [...screenWatchers.keys()]) stopWatching(id);
       listeners.clear();
       // Final notes + summary for the dashboard.
       try {
@@ -808,6 +890,7 @@ export default defineAgent<ProcData>({
     // Pick up anyone whose tracks were subscribed during connect (and count everyone present as attending).
     for (const p of ctx.room.remoteParticipants.values()) {
       remember(p);
+      syncScreen(p);
       for (const pub of p.trackPublications.values()) {
         if (pub.track && !listeners.has(p.identity)) listen(pub.track as RemoteTrack, pub as RemoteTrackPublication, p);
       }

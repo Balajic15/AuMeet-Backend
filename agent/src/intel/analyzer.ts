@@ -136,6 +136,12 @@ export class MeetingAnalyzer {
     }
   }
 
+  /** New screen observations: part of the notes everyone (and every model step) sees. */
+  setScreen(screen: Insights['screen']): Insights {
+    this.state = { ...this.state, screen };
+    return this.state;
+  }
+
   /** Someone dismissed a copilot suggestion: hide it now and never show it again in this meeting. */
   dismissSuggestion(key: string): Insights | null {
     const c = this.state.copilot;

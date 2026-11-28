@@ -59,6 +59,15 @@ const STATUS_ORDER: DecisionStatus[] = ['disputed', 'proposed', 'agreed', 'rejec
         }
       </section>
     }
+    @if (live() && i.screen?.observations?.length) {
+      @let o = i.screen!.observations[i.screen!.observations.length - 1];
+      <section class="block onscreen">
+        <h3><app-icon name="monitor" [size]="13" /> On screen</h3>
+        <p class="focus"><span class="k">{{ o.sharer }}</span> {{ o.app }} – {{ o.summary }}</p>
+        @for (e of o.visibleErrors; track $index) { <p class="err-line">{{ e }}</p> }
+        @if (o.issue.suspected && o.issue.description) { <p class="sub">Possible issue</p><p class="focus">{{ o.issue.description }}</p> }
+      </section>
+    }
     @if (openRisks().length) {
       <section class="block">
         <h3>Risks &amp; conflicts <span class="n warn">{{ openRisks().length }}</span></h3>
@@ -402,6 +411,8 @@ const STATUS_ORDER: DecisionStatus[] = ['disputed', 'proposed', 'agreed', 'rejec
 
     .copilot { padding: 12px 14px; background: var(--surface-sunken); border-left: 3px solid #9db4ff; }
     .copilot h3 { color: #9db4ff; }
+    .onscreen { padding: 12px 14px; background: var(--surface-sunken); border-left: 3px solid #c9a7ff; }
+    .err-line { margin: 6px 0 0; font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; color: #ff9b9b; word-break: break-word; }
     .sugs { list-style: none; margin: 10px 0 0; padding: 0; }
     .sug { display: grid; grid-template-columns: auto 1fr; gap: 2px 8px; padding: 8px 0; border-top: 1px solid #2a2a2a; font-size: 14px; line-height: 1.45; }
     .sug-kind { grid-row: span 3; align-self: start; padding: 1px 6px; border: 1px solid currentColor; font-size: 11px; font-weight: 600; color: #9db4ff; }

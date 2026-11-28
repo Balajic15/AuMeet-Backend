@@ -14,6 +14,8 @@ export interface Behaviour {
   learnFromReactions: boolean;
   /** The on-screen copilot in meetings. */
   copilot: { enabled: boolean; minRelevance: number; maxSuggestions: number };
+  /** Understanding shared screens (only with the sharer's consent). */
+  screen: { enabled: boolean; minIntervalSeconds: number; maxPerTenMinutes: number; changeThreshold: number; maxSide: number };
   limits: {
     minGapSeconds: number;
     maxPerTenMinutes: number;
@@ -26,7 +28,8 @@ export interface Behaviour {
 }
 export type WatchKey = 'decisions' | 'owners' | 'disputes' | 'goal' | 'time' | 'followUps' | 'contradictions' | 'risks';
 /** Any subset of the settings. */
-export type BehaviourOverride = Partial<Omit<Behaviour, 'watchFor' | 'limits' | 'engine' | 'copilot'>> & {
+export type BehaviourOverride = Partial<Omit<Behaviour, 'watchFor' | 'limits' | 'engine' | 'copilot' | 'screen'>> & {
+  screen?: Partial<Behaviour['screen']>;
   watchFor?: Partial<Behaviour['watchFor']>;
   copilot?: Partial<Behaviour['copilot']>;
   limits?: Partial<Behaviour['limits']>;

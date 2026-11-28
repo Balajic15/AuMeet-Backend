@@ -158,8 +158,22 @@ export interface Copilot {
   updatedAt: string;
 }
 
+export interface ScreenObservation {
+  id: string;
+  at: string;
+  sharer: string;
+  app: string;
+  summary: string;
+  visibleErrors: string[];
+  keyText: string[];
+  focus: string;
+  issue: { suspected: boolean; description: string; actual: string; expected: string; steps: string[] };
+}
+
 export interface Insights {
   summary: string;
+  /** What the AI saw on a shared screen (only with the sharer's consent). */
+  screen?: { sharing: string | null; observations: ScreenObservation[] } | null;
   keyPoints?: KeyPoint[];
   statementChanges?: StatementChange[];
   assumptions?: Assumption[];

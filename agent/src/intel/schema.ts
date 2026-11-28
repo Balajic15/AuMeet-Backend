@@ -409,6 +409,8 @@ export interface Insights {
   assumptions?: Assumption[];
   risks?: Risk[];
   copilot?: Copilot | null;
+  /** What is (and was) on a shared screen the AI was allowed to see (screen/vision.ts). */
+  screen?: import('../screen/vision.js').ScreenState | null;
   topics: Topic[];
   decisions: Decision[];
   actionItems: ActionItem[];

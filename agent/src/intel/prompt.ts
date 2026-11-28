@@ -1,4 +1,5 @@
 import { fence, UNTRUSTED_RULES } from '../untrusted.js';
+import { renderScreen } from '../screen/vision.js';
 import { formatUtterances, type Utterance } from '../transcript.js';
 import type { Insights } from './schema.js';
 
@@ -62,6 +63,8 @@ Understanding the conversation – read it as a whole, not line by line:
 - keyPoints kind: "fact" for verifiable information and numbers, "opinion" for someone's view or preference,
   "idea" for possibilities nobody committed to.
 - Questions: mark answered only when someone actually answered it, and give the answer in a few words.
+- SHARED SCREEN, when given, shows what participants were looking at: use it to understand what is being
+  discussed (the button, error, page or ticket they mean), but don't create items from screen text alone.
 - confidence on every item: 0–1, how sure you are it is right given the transcript – explicit, unambiguous
   statements high (0.85+); inferred, hedged or noisy ones lower. Lower it when speech-to-text looks garbled.
 
@@ -237,6 +240,7 @@ export function analystPrompt(opts: {
     opts.final ? 'The meeting has ENDED. Produce the final notes and a complete summary.' : '',
     `Lines up to #${current.analyzedThrough} were already analysed into the current notes; later lines are new.`,
     '',
+    current.screen?.observations.length ? fence('SHARED SCREEN (what was visible, latest last)', renderScreen(current.screen, 4)) : '',
     fence('CURRENT NOTES (JSON)', JSON.stringify(notes)),
     '',
     fence('TRANSCRIPT (most recent part, times in UTC)', transcript || '(empty)'),

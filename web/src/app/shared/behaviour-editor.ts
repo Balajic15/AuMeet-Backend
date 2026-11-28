@@ -92,6 +92,18 @@ const WATCH: Array<{ key: WatchKey; label: string }> = [
     </section>
 
     <section class="sec">
+      <h3>Screen understanding</h3>
+      <p class="hint">When someone shares their screen and allows it, the AI looks at it to understand what is shown – only when the screen changes meaningfully or someone asks, never every frame.</p>
+      <label class="check"><input type="checkbox" [checked]="screen().enabled" (change)="setScreen({ enabled: $any($event.target).checked })" /> Understand shared screens</label>
+      @if (screen().enabled) {
+        <div class="grid">
+          <label>Look at most every <input class="input num" type="number" min="3" max="600" [value]="screen().minIntervalSeconds" (change)="setScreen({ minIntervalSeconds: clampInt($event, 3, 600) })" /> s</label>
+          <label>At most <input class="input num" type="number" min="1" max="120" [value]="screen().maxPerTenMinutes" (change)="setScreen({ maxPerTenMinutes: clampInt($event, 1, 120) })" /> looks per 10 min</label>
+        </div>
+      }
+    </section>
+
+    <section class="sec">
       <h3>Learning</h3>
       <label class="check"><input type="checkbox" [checked]="b.learnFromReactions" (change)="set({ learnFromReactions: $any($event.target).checked })" /> Learn from how people react to its remarks and suggestions</label>
     </section>
@@ -145,6 +157,14 @@ export class BehaviourEditor {
   /** Older profiles may not have copilot settings yet. */
   protected copilot(): Behaviour['copilot'] {
     return this.value().copilot ?? { enabled: true, minRelevance: 0.6, maxSuggestions: 4 };
+  }
+
+  protected screen(): Behaviour['screen'] {
+    return this.value().screen ?? { enabled: true, minIntervalSeconds: 20, maxPerTenMinutes: 12, changeThreshold: 0.08, maxSide: 1280 };
+  }
+
+  protected setScreen(patch: Partial<Behaviour['screen']>): void {
+    this.set({ screen: { ...this.screen(), ...patch } });
   }
 
   protected setCopilot(patch: Partial<Behaviour['copilot']>): void {
