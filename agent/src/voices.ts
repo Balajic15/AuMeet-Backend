@@ -10,7 +10,7 @@ const INTRO = /\b(?:[Ii] am|[Ii]'m|[Ii]m|[Tt]his is|[Mm]y name is|[Ii]t's|[Ii]t 
 const NOT_NAMES = new Set([
   'Sorry', 'Sure', 'Fine', 'Good', 'Great', 'Okay', 'Ok', 'Here', 'Back', 'Done', 'Ready', 'Not', 'Just', 'Also',
   'Going', 'Happy', 'Glad', 'Late', 'Busy', 'Muted', 'Talking', 'Speaking', 'Still', 'The', 'That', 'This', 'It',
-  'AuMeet', 'Thinking', 'Working', 'Trying', 'Looking', 'Saying', 'Agreeing', 'Wondering',
+  'AuMeet', 'Maaya', 'Maya', 'Thinking', 'Working', 'Trying', 'Looking', 'Saying', 'Agreeing', 'Wondering',
 ]);
 
 /** "I'm Priya" → "Priya"; null when the sentence isn't a self-introduction. */

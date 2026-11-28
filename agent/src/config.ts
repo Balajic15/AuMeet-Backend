@@ -43,5 +43,8 @@ export function config(): Config {
   return cached;
 }
 
-/** Display name of the AI participant tile and transcript lines (deployment setting, AGENT_DISPLAY_NAME). */
-export const AGENT_DISPLAY_NAME = process.env['AGENT_DISPLAY_NAME']?.trim() || 'AuMeet AI';
+/**
+ * Fallback name of the AI participant (tile and transcript) until the behaviour profile is loaded; after that the
+ * profile's name is used (stored data, editable). Deployment setting AGENT_DISPLAY_NAME.
+ */
+export const AGENT_DISPLAY_NAME = process.env['AGENT_DISPLAY_NAME']?.trim() || 'Maaya';

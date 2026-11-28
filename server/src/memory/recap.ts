@@ -40,7 +40,7 @@ export interface RecapPrep {
 }
 
 export function recapPrompt(session: SessionDoc, lines: TranscriptRow[], prep: RecapPrep = {}): string {
-  let transcript = lines.map((l) => `${l.isAgent ? 'AuMeet AI' : l.speakerName}: ${l.text}`).join('\n');
+  let transcript = lines.map((l) => `${l.isAgent ? `${l.speakerName || 'AI'} (AI)` : l.speakerName}: ${l.text}`).join('\n');
   // Keep the end of long meetings (where conclusions usually are) if we must cut.
   if (transcript.length > MAX_TRANSCRIPT_CHARS) transcript = '…\n' + transcript.slice(-MAX_TRANSCRIPT_CHARS);
 

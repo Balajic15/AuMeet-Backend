@@ -18,11 +18,11 @@ describe('MeetingTranscript', () => {
     const at = Date.UTC(2026, 10, 26, 10, 42);
     t.add({ speakerId: 'user:a', speakerName: 'Alice', userId: 'a', isAgent: false, channel: 'voice', text: "Let's use MongoDB.", language: 'en', at });
     t.add({ speakerId: 'user:b', speakerName: 'Bob', userId: 'b', isAgent: false, channel: 'chat', text: 'PostgreSQL is better', language: '', at });
-    t.add({ speakerId: 'agent', speakerName: 'AuMeet AI', userId: null, isAgent: true, channel: 'voice', text: 'Can we confirm?', language: '', at });
+    t.add({ speakerId: 'agent', speakerName: 'Maaya', userId: null, isAgent: true, channel: 'voice', text: 'Can we confirm?', language: '', at });
 
     expect(t.speakers()).toEqual(['Alice', 'Bob']);
     expect(t.format(10, 'UTC')).toBe(
-      "[10:42] Alice: Let's use MongoDB.\n[10:42] Bob (in chat): PostgreSQL is better\n[10:42] AuMeet AI: Can we confirm?",
+      "[10:42] Alice: Let's use MongoDB.\n[10:42] Bob (in chat): PostgreSQL is better\n[10:42] Maaya (AI): Can we confirm?",
     );
     expect(t.all.map((u) => u.id)).toEqual([1, 2, 3]);
   });

@@ -1,4 +1,11 @@
 import { AGENT_DISPLAY_NAME } from './config.js';
+
+/** The AI's current name (from the behaviour profile once loaded). */
+let assistantName = AGENT_DISPLAY_NAME;
+export function setAssistantName(name: string): void {
+  if (name.trim()) assistantName = name.trim();
+}
+export const getAssistantName = () => assistantName;
 import type { Collection, Db } from 'mongodb';
 import { log } from '@livekit/agents';
 
@@ -65,8 +72,9 @@ export function formatUtterances(items: readonly Utterance[], timeZone?: string)
     .map((u) => {
       const t = new Date(u.at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone });
       const via = u.channel === 'chat' ? ' (in chat)' : '';
-      // A participant who calls themselves "AuMeet" must not look like the assistant.
-      const name = u.isAgent ? AGENT_DISPLAY_NAME : u.speakerName.trim().toLowerCase().includes(AGENT_DISPLAY_NAME.toLowerCase().split(' ')[0]!) ? `${u.speakerName} (participant)` : u.speakerName;
+      // The AI's lines are marked "(AI)"; a participant who calls themselves by the AI's name must not look like it.
+      const ai = assistantName.toLowerCase().split(' ')[0]!;
+      const name = u.isAgent ? `${assistantName} (AI)` : u.speakerName.trim().toLowerCase().includes(ai) ? `${u.speakerName} (participant)` : u.speakerName;
       return `[${t}] ${name}${via}: ${u.text}`;
     })
     .join('\n');

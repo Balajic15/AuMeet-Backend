@@ -37,8 +37,8 @@ import { verifyParticipant } from './identity.js';
 import { fence } from './untrusted.js';
 import { languageName, voiceLanguage } from './language.js';
 import { ParticipantListener } from './listener.js';
-import { chatReplyInstruction, meetingInstructions, replyInstruction, type MeetingInfo } from './prompts.js';
-import { MeetingTranscript, TranscriptSink } from './transcript.js';
+import { chatReplyInstruction, meetingInstructions, notesSection, replyInstruction, type MeetingInfo } from './prompts.js';
+import { getAssistantName, MeetingTranscript, setAssistantName, TranscriptSink } from './transcript.js';
 import { SharedDeviceVoices } from './voices.js';
 import { emptyPrep, loadPrep, renderPrep, type MeetingPrep } from './prep.js';
 import { connectMongo } from './db.js';
@@ -167,6 +167,12 @@ export default defineAgent<ProcData>({
     let isWake: (text: string) => boolean = () => false;
     const applyBehaviour = (b: Behaviour | null) => {
       behaviour = b;
+      if (b) {
+        setAssistantName(b.name);
+        // The tile shows the configured name (e.g. "Maaya"), not a hard-coded one.
+        const me = ctx.room.localParticipant;
+        if (me && me.name !== b.name) void me.updateName(b.name).catch(() => {});
+      }
       isWake = b ? wakeMatcher(b) : () => false;
       const terms = b ? [b.name, ...b.wakeWords.filter((w) => /^[\p{Script=Latin}\s'-]+$/u.test(w))].slice(0, 20) : [];
       sttEngine = makeStt(terms, false);
@@ -296,9 +302,9 @@ export default defineAgent<ProcData>({
     let latestNotes = '';
     const refreshInstructions = () =>
       assistant
-        .updateInstructions(latestNotes ? `${baseInstructions}\n\n${fence('CURRENT MEETING NOTES', latestNotes)}` : baseInstructions)
+        .updateInstructions(`${baseInstructions}\n\n${notesSection(latestNotes)}`)
         .catch(() => {});
-    const assistant = new voice.Agent({ instructions: baseInstructions, tools });
+    const assistant = new voice.Agent({ instructions: `${baseInstructions}\n\n${notesSection('')}`, tools });
 
     // ---------- conversation intelligence ----------
     const sendInsights = (insights: Insights, to?: string[]) =>
@@ -402,7 +408,7 @@ export default defineAgent<ProcData>({
         lastAgentText = item.textContent;
         transcript.add({
           speakerId: ctx.room.localParticipant?.identity ?? 'agent',
-          speakerName: AGENT_DISPLAY_NAME,
+          speakerName: getAssistantName(),
           userId: null,
           isAgent: true,
           channel: 'voice',
@@ -545,7 +551,7 @@ export default defineAgent<ProcData>({
     const replyInChat = async (speaker: string) => {
       try {
         const chat = assistant.chatCtx.copy();
-        chat.addMessage({ role: 'system', content: baseInstructions });
+        chat.addMessage({ role: 'system', content: `${baseInstructions}\n\n${notesSection(latestNotes)}` });
         chat.addMessage({ role: 'system', content: chatReplyInstruction(speaker) });
         let out = '';
         for await (const chunk of brain.chat({ chatCtx: chat })) out += chunk.delta?.content ?? '';
@@ -555,7 +561,7 @@ export default defineAgent<ProcData>({
         await appendToContext('assistant', `(in chat) ${out}`);
         transcript.add({
           speakerId: ctx.room.localParticipant?.identity ?? 'agent',
-          speakerName: AGENT_DISPLAY_NAME,
+          speakerName: getAssistantName(),
           userId: null,
           isAgent: true,
           channel: 'chat',
@@ -741,6 +747,9 @@ export default defineAgent<ProcData>({
     });
 
     applyRoomSettings(ctx.room.metadata);
+    if (behaviour && ctx.room.localParticipant?.name !== (behaviour as Behaviour).name) {
+      await ctx.room.localParticipant?.updateName((behaviour as Behaviour).name).catch((err: unknown) => logger.debug({ err }, 'could not set the AI name'));
+    }
 
     // Pick up anyone whose tracks were subscribed during connect (and count everyone present as attending).
     for (const p of ctx.room.remoteParticipants.values()) {

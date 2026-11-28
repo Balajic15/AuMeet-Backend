@@ -62,7 +62,7 @@ export function buildChunks(session: SessionDoc, lines: TranscriptRow[], recap: 
   for (let i = 0; i < spoken.length; i += WINDOW - OVERLAP) {
     const win = spoken.slice(i, i + WINDOW);
     if (win.length === 0) break;
-    let body = win.map((l) => `${l.isAgent ? 'AuMeet AI' : l.speakerName}: ${l.text}`).join('\n');
+    let body = win.map((l) => `${l.isAgent ? `${l.speakerName || 'AI'} (AI)` : l.speakerName}: ${l.text}`).join('\n');
     if (body.length > MAX_CHARS) body = body.slice(0, MAX_CHARS);
     out.push({ kind: 'transcript', ref: String(win[0]!.seq), text: `From ${where}:\n${body}` });
     if (i + WINDOW >= spoken.length) break;

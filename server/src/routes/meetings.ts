@@ -470,7 +470,7 @@ router.get('/:code/insights/:sessionId/transcript', requireAuth, async (req, res
     const body = lines
       .map((l) => {
         const t = l.at ? new Date(l.at).toISOString().slice(11, 16) : '--:--';
-        return `[${t} UTC] ${l.isAgent ? 'AuMeet AI' : l.speakerName}${l.channel === 'chat' ? ' (chat)' : ''}: ${l.text}`;
+        return `[${t} UTC] ${l.isAgent ? `${l.speakerName || 'AI'} (AI)` : l.speakerName}${l.channel === 'chat' ? ' (chat)' : ''}: ${l.text}`;
       })
       .join('\n');
     const safeTitle = meeting.title.replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '-').slice(0, 60) || 'meeting';

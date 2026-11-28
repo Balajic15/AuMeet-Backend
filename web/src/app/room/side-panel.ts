@@ -50,7 +50,7 @@ export type PanelTab = 'chat' | 'people' | 'insights';
             <app-insights-view [insights]="ins" [compact]="true" [live]="true" />
           }
         } @else if (room.hasAgent()) {
-          <p class="hint">AuMeet AI is listening. Decisions, tasks and open questions will appear here as the conversation develops.</p>
+          <p class="hint">{{ room.agentName() }} is listening. Decisions, tasks and open questions will appear here as the conversation develops.</p>
         } @else if (meeting()?.settings?.aiEnabled) {
           <div class="hint">
             <p class="hint-p">The AI participant hasn't joined yet.</p>

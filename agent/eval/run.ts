@@ -48,10 +48,10 @@ type Line = [speaker: string, text: string, secondsAfterStart?: number];
 function script(lines: Line[]): Utterance[] {
   return lines.map(([who, text, s], i) => ({
     id: i + 1,
-    speakerId: who === 'AuMeet AI' ? 'agent' : `user:${who.toLowerCase()}`,
+    speakerId: who === 'Maaya' ? 'agent' : `user:${who.toLowerCase()}`,
     speakerName: who,
     userId: null,
-    isAgent: who === 'AuMeet AI',
+    isAgent: who === 'Maaya',
     channel: 'voice',
     text,
     language: '',
@@ -352,7 +352,7 @@ const scenarios: Record<string, () => Promise<{ checks: Check[]; ms: number[] }>
       ['Asha', "Let's use MongoDB."],
       ['Ben', 'PostgreSQL is better for us.'],
       ['Chen', "Okay, let's proceed."],
-      ['AuMeet AI', 'Can we confirm which database we are going with?'],
+      ['Maaya', 'Can we confirm which database we are going with?'],
       ['Asha', "Not now please, we'll decide that offline."],
       ['Ben', 'Right. Next: the release notes.'],
     ]);
@@ -424,7 +424,7 @@ const scenarios: Record<string, () => Promise<{ checks: Check[]; ms: number[] }>
     const misheard = await ask('Asha', 'Oh meat, can you summarise that?');
     // Alone with the AI (the situation from a real meeting): a plain question or greeting is for the AI.
     const alone = script([
-      ['AuMeet AI', "Hi Balaji, I'm AuMeet, just joining to take notes and help track action items for your meeting today."],
+      ['Maaya', "Hi Balaji, I'm Maaya, just joining to take notes and help track action items for your meeting today."],
       ['Balaji', 'Hi.'],
     ]);
     const askAlone = (text: string, chat: boolean) =>

@@ -148,6 +148,8 @@ export class RoomService implements OnDestroy {
   /** Set when the host muted this user's microphone remotely (for a one-off notice). */
   readonly mutedByHost = signal(0);
   readonly hasAgent = computed(() => this.participants().some((p) => p.isAgent));
+  /** The AI's name as it appears in the room (from its behaviour settings, e.g. "Maaya"). */
+  readonly agentName = computed(() => this.participants().find((p) => p.isAgent)?.name ?? 'The AI');
   /** The host is recording this meeting (room metadata, visible to everyone). */
   readonly recording = signal(false);
 
@@ -220,9 +222,9 @@ export class RoomService implements OnDestroy {
       let text = '';
       for await (const chunk of reader) {
         text += chunk;
-        this.upsertCaption({ id, name: p.name || 'AuMeet AI', text, final: false, at: Date.now() });
+        this.upsertCaption({ id, name: p.name || 'AI', text, final: false, at: Date.now() });
       }
-      this.upsertCaption({ id, name: p.name || 'AuMeet AI', text, final: true, at: Date.now() });
+      this.upsertCaption({ id, name: p.name || 'AI', text, final: true, at: Date.now() });
     });
 
     // What people say, transcribed by the agent (only trusted from the agent).

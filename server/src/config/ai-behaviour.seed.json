@@ -1,6 +1,6 @@
 {
-  "name": "AuMeet",
-  "wakeWords": ["Au Meet", "Oh Meet", "O Meet", "All Meet", "Aw Meet", "Ow Meet", "Hey Meet", "ऑमीट", "औमीट", "ओमीट"],
+  "name": "Maaya",
+  "wakeWords": ["Maya", "Mayaa", "Maia", "Maiya", "Mya", "Myaa", "Mia", "Moya", "Maaia", "माया", "मया", "मायाजी", "మాయ", "மாயா", "মায়া", "AuMeet", "Au Meet"],
   "talkativeness": 0.5,
   "tone": "neutral",
   "replyLength": "brief",
