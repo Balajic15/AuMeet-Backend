@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { fence, UNTRUSTED_RULES } from '../ai/untrusted.js';
 import type { SessionDoc, TranscriptRow } from './types.js';
 import { dateLabel } from './chunks.js';
 
@@ -27,7 +28,9 @@ disagreement must be presented as unresolved, not as a decision.
 When a MEETING GOAL is given, judge it strictly: "met" only if the meeting clearly achieved it,
 "partly_met" if some of it was achieved, otherwise "not_met"; mention agenda items that were not covered,
 and list what remains unfinished (unfinished agenda items, unmet parts of the goal, open conflicts and risks).
-Write in the language mostly used in the meeting. Plain text, no markdown.`;
+Write in the language mostly used in the meeting. Plain text, no markdown.
+
+${UNTRUSTED_RULES}`;
 
 const MAX_TRANSCRIPT_CHARS = 60_000;
 
@@ -49,10 +52,8 @@ export function recapPrompt(session: SessionDoc, lines: TranscriptRow[], prep: R
       ? `AGENDA: ${prep.agenda.map((a) => a.title + (a.minutes ? ` (${a.minutes} min)` : '')).join('; ')}`
       : '',
     '',
-    'STRUCTURED NOTES (from the live note-taker):',
-    JSON.stringify(session.insights ?? {}),
+    fence('STRUCTURED NOTES (from the live note-taker)', JSON.stringify(session.insights ?? {})),
     '',
-    'TRANSCRIPT:',
-    transcript || '(no transcript)',
+    fence('TRANSCRIPT', transcript || '(no transcript)'),
   ].join('\n');
 }

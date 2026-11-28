@@ -4,7 +4,7 @@ import { aiConfigured, getAi } from '../ai/gemini.js';
 import { requireAuth } from '../middleware/auth.js';
 import { MeetingModel } from '../models/Meeting.js';
 import { MeetingInsightModel } from '../models/Insights.js';
-import { accessibleMeetingCodes } from '../memory/access.js';
+import { accessScope } from '../memory/access.js';
 import { ANSWER_SYSTEM, AnswerOutput, answerPrompt, searchMemory } from '../memory/search.js';
 import type { SessionDoc } from '../memory/types.js';
 import { conflict, forbidden, notFound } from '../utils/httpError.js';
@@ -18,7 +18,7 @@ router.use(requireAuth);
 /** "My tasks" across all meetings + decisions still waiting for the team. */
 router.get('/overview', async (req, res) => {
   const uid = req.auth!.sub;
-  const codes = await accessibleMeetingCodes(uid);
+  const scope = await accessScope(uid);
 
   const [withMyTasks, recent] = await Promise.all([
     MeetingInsightModel.find({ 'insights.actionItems.ownerUserId': uid })
@@ -26,7 +26,7 @@ router.get('/overview', async (req, res) => {
       .limit(100)
       .select({ sessionId: 1, meetingCode: 1, title: 1, startedAt: 1, endedAt: 1, 'insights.actionItems': 1 })
       .lean(),
-    MeetingInsightModel.find({ meetingCode: { $in: codes } })
+    MeetingInsightModel.find({ sessionId: { $in: scope.sessionIds } })
       .sort({ startedAt: -1 })
       .limit(30)
       .select({ sessionId: 1, meetingCode: 1, title: 1, startedAt: 1, 'insights.decisions': 1 })
@@ -108,8 +108,8 @@ router.patch('/tasks/:sessionId/:taskId', async (req, res) => {
  * completed work, and open risks. "Who owns what, and what is still pending?"
  */
 router.get('/commitments', async (req, res) => {
-  const codes = await accessibleMeetingCodes(req.auth!.sub);
-  const ledger = await buildLedger(codes);
+  const scope = await accessScope(req.auth!.sub);
+  const ledger = await buildLedger(scope.sessionIds);
   const open = ledger.tasks.filter((t) => t.status === 'open');
   const byOwner = new Map<string, LedgerTask[]>();
   for (const t of open) {
@@ -149,8 +149,8 @@ const AskBody = z.object({ question: z.string().trim().min(3).max(500) });
 router.post('/ask', async (req, res) => {
   const { question } = AskBody.parse(req.body);
   const ai = getAi(); // 503 if not configured
-  const codes = await accessibleMeetingCodes(req.auth!.sub);
-  const [hits, ledger] = await Promise.all([searchMemory(ai, codes, question, 8), buildLedger(codes)]);
+  const scope = await accessScope(req.auth!.sub);
+  const [hits, ledger] = await Promise.all([searchMemory(ai, scope, question, 8), buildLedger(scope.sessionIds)]);
   const ledgerText = renderLedger(ledger);
 
   if (hits.length === 0 && !ledgerText) {

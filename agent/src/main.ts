@@ -33,6 +33,8 @@ import { geminiRouter } from './router.js';
 import { loadBehaviour, wakeMatcher, type Behaviour } from './behaviour.js';
 import { loadLearning, recordReaction, type IntentStats } from './learning.js';
 import { AGENT_DISPLAY_NAME, config } from './config.js';
+import { verifyParticipant } from './identity.js';
+import { fence } from './untrusted.js';
 import { languageName, voiceLanguage } from './language.js';
 import { ParticipantListener } from './listener.js';
 import { chatReplyInstruction, meetingInstructions, replyInstruction, type MeetingInfo } from './prompts.js';
@@ -84,18 +86,14 @@ function parseDispatch(raw: string | undefined, roomName: string): DispatchInfo 
   }
 }
 
-function userIdOf(p: RemoteParticipant): string | null {
-  try {
-    return (JSON.parse(p.metadata || '{}') as { userId?: string | null }).userId ?? null;
-  } catch {
-    return null;
-  }
-}
+/** Account id from the token identity only; names only as the server signed them (see identity.ts). */
+const who = (p: RemoteParticipant) => verifyParticipant(config().LIVEKIT_API_SECRET, p);
+const userIdOf = (p: RemoteParticipant): string | null => who(p).userId;
 
 const isHuman = (p: RemoteParticipant) => p.kind !== ParticipantKind.AGENT;
 const transcribeAllowed = (p: RemoteParticipant) => p.attributes?.[TRANSCRIBE_ATTR] !== 'off';
 const isSharedDevice = (p: RemoteParticipant) => p.attributes?.[SHARED_ATTR] === '1';
-const nameOf = (p: RemoteParticipant) => p.name || p.identity;
+const nameOf = (p: RemoteParticipant) => who(p).name;
 
 export default defineAgent<ProcData>({
   // Load the voice-activity model once per worker process, not per meeting.
@@ -244,7 +242,7 @@ export default defineAgent<ProcData>({
         parameters: z.object({ query: z.string().describe('What to look for, e.g. "data retention period"') }),
         execute: async ({ query }) => {
           const hits = await searchDocs(query, 6);
-          return hits.length ? hits.map((h) => h.text) : 'Nothing relevant found in the meeting documents.';
+          return hits.length ? fence('DOCUMENT EXCERPTS', hits.map((h) => h.text).join('\n\n')) : 'Nothing relevant found in the meeting documents.';
         },
       });
       const searchHistory = historySearcher(mongo.db, {
@@ -258,7 +256,10 @@ export default defineAgent<ProcData>({
           'List decisions, tasks (owner, due date, open/done/overdue) and risks from earlier sessions of THIS meeting and the meeting ' +
           'it follows up on. Use for "who owns …", "what did we decide about …", "what is still pending", "what progress was made".',
         parameters: z.object({}),
-        execute: async () => (await commitmentsLedger(mongo!.db, memoryCodes(), ctx.job.id)) || 'No earlier sessions with notes.',
+        execute: async () => {
+          const ledger = await commitmentsLedger(mongo!.db, memoryCodes(), ctx.job.id);
+          return ledger ? fence('EARLIER DECISIONS, TASKS AND RISKS', ledger) : 'No earlier sessions with notes.';
+        },
       });
       tools['search_meeting_history'] = llm.tool({
         description:
@@ -267,7 +268,7 @@ export default defineAgent<ProcData>({
         parameters: z.object({ query: z.string().describe('What to look for, e.g. "database decision"') }),
         execute: async ({ query }) => {
           const hits = await searchHistory(query);
-          return hits.length ? hits : 'No matching discussion found in earlier sessions of this meeting.';
+          return hits.length ? fence('EARLIER DISCUSSION', hits.map((h) => `[${h.date}, ${h.kind}] ${h.text}`).join('\n\n')) : 'No matching discussion found in earlier sessions of this meeting.';
         },
       });
     }
@@ -283,12 +284,19 @@ export default defineAgent<ProcData>({
       },
     });
     const composeBase = () =>
-      [meetingInstructions(info, behaviour), renderPrep(prep), renderCarryover(continuity.carryover), earlier].filter(Boolean).join('\n\n');
+      [
+        meetingInstructions(info, behaviour),
+        prep && renderPrep(prep) ? fence('MEETING PREPARATION', renderPrep(prep)) : '',
+        continuity.carryover ? fence('LEFT OPEN AT THE PREVIOUS MEETING', renderCarryover(continuity.carryover)) : '',
+        earlier ? fence('EARLIER SESSIONS OF THIS MEETING', earlier) : '',
+      ]
+        .filter(Boolean)
+        .join('\n\n');
     let baseInstructions = composeBase();
     let latestNotes = '';
     const refreshInstructions = () =>
       assistant
-        .updateInstructions(latestNotes ? `${baseInstructions}\n\nCURRENT MEETING NOTES\n${latestNotes}` : baseInstructions)
+        .updateInstructions(latestNotes ? `${baseInstructions}\n\n${fence('CURRENT MEETING NOTES', latestNotes)}` : baseInstructions)
         .catch(() => {});
     const assistant = new voice.Agent({ instructions: baseInstructions, tools });
 
@@ -711,8 +719,9 @@ export default defineAgent<ProcData>({
 
     applyRoomSettings(ctx.room.metadata);
 
-    // Pick up anyone whose tracks were subscribed during connect.
+    // Pick up anyone whose tracks were subscribed during connect (and count everyone present as attending).
     for (const p of ctx.room.remoteParticipants.values()) {
+      remember(p);
       for (const pub of p.trackPublications.values()) {
         if (pub.track && !listeners.has(p.identity)) listen(pub.track as RemoteTrack, pub as RemoteTrackPublication, p);
       }

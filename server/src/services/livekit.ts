@@ -6,6 +6,7 @@ import {
   RoomServiceClient,
   TrackSource,
 } from 'livekit-server-sdk';
+import { createHmac } from 'node:crypto';
 import { env } from '../config/env.js';
 import { logger } from '../logger.js';
 
@@ -17,6 +18,17 @@ export type ParticipantRole = 'host' | 'participant' | 'guest';
 export interface ParticipantMetadata {
   role: ParticipantRole;
   userId: string | null;
+}
+
+/**
+ * Participants may update their own LiveKit name and metadata (needed for attributes such as raise hand and the
+ * transcription opt-out), so neither can be trusted as is. The server signs who the token was issued for; the
+ * agent (which shares LIVEKIT_API_SECRET) checks it and ignores a changed name, role or account id.
+ * Must match agent/src/identity.ts.
+ */
+export function participantSignature(identity: string, name: string, role: ParticipantRole, userId: string | null): string {
+  const payload = ['aumeet-participant-v1', identity, name, role, userId ?? ''].join('\u0000');
+  return createHmac('sha256', env.LIVEKIT_API_SECRET).update(payload).digest('base64url');
 }
 
 /** Participant attribute the agent honours: 'off' = don't transcribe or analyse this person. */
@@ -49,7 +61,11 @@ export async function createParticipantToken(opts: {
   const at = new AccessToken(env.LIVEKIT_API_KEY, env.LIVEKIT_API_SECRET, {
     identity: opts.identity,
     name: opts.name,
-    metadata: JSON.stringify(opts.metadata),
+    metadata: JSON.stringify({
+      ...opts.metadata,
+      name: opts.name,
+      sig: participantSignature(opts.identity, opts.name, opts.metadata.role, opts.metadata.userId),
+    }),
     attributes: { [TRANSCRIBE_ATTR]: opts.transcribe === false ? 'off' : 'on' },
     ttl: '6h',
   });

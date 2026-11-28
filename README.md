@@ -104,6 +104,22 @@ Caddy gets and renews a Let's Encrypt certificate automatically and serves the a
 - Privacy: anyone can opt out of AI transcription (in the lobby or the meeting). The AI then doesn't
   process their audio or chat at all. While a meeting is recorded, everyone sees a REC badge.
 - Hosts can use a waiting room (admit or deny each person), lock the meeting, and mute or remove people.
+- **Per-session access**: on a recurring link, people see the notes, transcript, recordings, memory and analytics of
+  the sessions they attended (the AI saw them, or they joined during it), not every session of the link. The host sees all.
+- **Identity**: participants can't impersonate others. The server signs each participant's name, role and account
+  into the join token; the AI ignores names, roles or account ids changed in the room, and marks changed names as
+  unverified. The UI derives "host" from the token identity, never from editable metadata.
+- **Audit log** (`audit_events`, kept `AUDIT_RETENTION_DAYS`, default 365): every successful change, failed sign-in,
+  and every view or download of a transcript or recording. Hosts see a meeting's trail on its notes page (Activity);
+  everyone can read their own sign-in history (`GET /api/auth/audit`).
+- **Webhooks**: LiveKit webhooks are signature-checked and replay-protected (each event id is processed once).
+  Outgoing project-tool webhooks are signed (`X-AuMeet-Signature: v1=HMAC-SHA256(secret, "<timestamp>.<body>")`,
+  `X-AuMeet-Timestamp`, `X-AuMeet-Event-Id`), go only to public HTTPS addresses (checked at connect time, so DNS
+  can't be re-pointed), and never follow redirects.
+- **Prompt injection**: everything participants say or write, and anything derived from it (notes, documents, earlier
+  meetings, corrections), reaches the model fenced as data the model must not obey; fake fence markers are
+  neutralised. Messages sent without review (reminders, overdue nudges) have links, addresses and phone numbers
+  stripped; emails and invites always need the host's approval.
 
 ## Run for development
 

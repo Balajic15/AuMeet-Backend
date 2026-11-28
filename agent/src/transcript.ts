@@ -65,7 +65,9 @@ export function formatUtterances(items: readonly Utterance[], timeZone?: string)
     .map((u) => {
       const t = new Date(u.at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone });
       const via = u.channel === 'chat' ? ' (in chat)' : '';
-      return `[${t}] ${u.isAgent ? AGENT_DISPLAY_NAME : u.speakerName}${via}: ${u.text}`;
+      // A participant who calls themselves "AuMeet" must not look like the assistant.
+      const name = u.isAgent ? AGENT_DISPLAY_NAME : u.speakerName.trim().toLowerCase().includes(AGENT_DISPLAY_NAME.toLowerCase().split(' ')[0]!) ? `${u.speakerName} (participant)` : u.speakerName;
+      return `[${t}] ${name}${via}: ${u.text}`;
     })
     .join('\n');
 }

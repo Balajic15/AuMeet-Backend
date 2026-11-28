@@ -19,7 +19,8 @@ import {
   setCorrectionExcluded,
   toggleLesson,
 } from '../services/feedback.js';
-import { assertSafeWebhook, FollowThroughSettings, followThroughSettings } from '../services/followThrough.js';
+import { assertSafeWebhook, FollowThroughSettings, followThroughSettings, webhookSecret } from '../services/followThrough.js';
+import { audit } from '../services/audit.js';
 import { mailConfigured } from '../services/mailer.js';
 
 /** The signed-in user's default AI behaviour and what the AI learned from their meetings. */
@@ -90,8 +91,19 @@ router.put('/follow-through', async (req, res) => {
     }
   }
   const next = { ...(await followThroughSettings(req.auth!.sub)), ...patch };
-  await UserModel.updateOne({ _id: req.auth!.sub }, { $set: { followThrough: next } });
+  const set = Object.fromEntries(Object.entries(next).map(([k, v]) => [`followThrough.${k}`, v]));
+  await UserModel.updateOne({ _id: req.auth!.sub }, { $set: set });
   res.json({ settings: next, mail: mailConfigured() });
+});
+
+// The secret our webhook signatures use (X-AuMeet-Signature). Shown to the host so their receiver can verify.
+router.get('/follow-through/webhook-secret', async (req, res) => {
+  await audit(req, 'followthrough.webhook_secret_viewed');
+  res.json({ secret: await webhookSecret(req.auth!.sub) });
+});
+
+router.post('/follow-through/webhook-secret', async (req, res) => {
+  res.json({ secret: await webhookSecret(req.auth!.sub, true) });
 });
 
 // ---------- learning from corrections (self-improving notes) ----------

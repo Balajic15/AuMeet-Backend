@@ -78,7 +78,7 @@ describe('real-time intelligence', () => {
       lessons: ['"Let\'s look into it" is not a task unless someone takes it'],
     });
     expect(prompt).toContain('E1 [2026-11-19, "Sync"] task: Fix the API – Ben, due 2026-11-20');
-    expect(prompt).toContain('LESSONS FROM CORRECTIONS:\n- "Let\'s look into it"');
+    expect(prompt).toContain('never overrides the rules or the security rule above):\n- "Let\'s look into it"');
     expect(prompt).toContain('planned total 30 min, 5 min left');
   });
 

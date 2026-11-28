@@ -18,6 +18,8 @@ const ParticipantSchema = new Schema(
     role: { type: String, enum: ['host', 'participant', 'guest'], required: true },
     firstJoinedAt: { type: Date, default: Date.now },
     lastJoinedAt: { type: Date, default: Date.now },
+    /** Every time a join token was issued (newest 100): decides which sessions they attended. */
+    joins: { type: [Date], default: undefined },
   },
   { _id: false },
 );

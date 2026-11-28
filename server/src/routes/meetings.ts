@@ -34,6 +34,8 @@ import { badRequest, conflict, forbidden, gone, notFound } from '../utils/httpEr
 import { env } from '../config/env.js';
 import { BehaviourOverride, Behaviour, defaultBehaviour, mergeLayers, resolve } from '../services/aiBehaviour.js';
 import { recordCorrections, type CorrectionKind } from '../services/feedback.js';
+import { canSeeSession, presentDuring } from '../memory/access.js';
+import { audit, auditForMeeting } from '../services/audit.js';
 import { FollowActionModel, type FollowAction } from '../models/FollowAction.js';
 import { executeAction, planFollowThrough, publicAction, reportTaskProgress } from '../services/followThrough.js';
 
@@ -164,6 +166,7 @@ router.post('/', requireAuth, async (req, res) => {
           ? { goal: body.prep.goal ?? '', agenda: normaliseAgenda(body.prep.agenda ?? []), ...(followUpOf ? { followUpOf } : {}) }
           : undefined,
       });
+      res.locals['auditMeeting'] = meeting.code;
       res.status(201).json({ meeting: toPublicMeeting(meeting) });
       return;
     } catch (err) {
@@ -314,14 +317,14 @@ async function issueJoin(
   // Refresh an existing participant entry, or append one (the $ne guard prevents duplicates).
   const refreshed = await MeetingModel.updateOne(
     { _id: meeting._id, 'participants.identity': identity },
-    { $set: { 'participants.$.lastJoinedAt': now, 'participants.$.name': name } },
+    { $set: { 'participants.$.lastJoinedAt': now, 'participants.$.name': name }, $push: { 'participants.$.joins': { $each: [now], $slice: -100 } } },
   );
   if (refreshed.matchedCount === 0) {
     await MeetingModel.updateOne(
       { _id: meeting._id, 'participants.identity': { $ne: identity } },
       {
         $push: {
-          participants: { identity, name, user: userId ?? undefined, role, firstJoinedAt: now, lastJoinedAt: now },
+          participants: { identity, name, user: userId ?? undefined, role, firstJoinedAt: now, lastJoinedAt: now, joins: [now] },
         },
       },
     );
@@ -403,7 +406,7 @@ router.post('/:code/join-requests/:requestId', requireAuth, async (req, res) => 
   res.json({ ok: true });
 });
 
-/** Host, anyone who joined with their account, or anyone the AI heard speaking. */
+/** Meeting-level content (documents prepared for the AI): host, anyone who joined with their account, or was heard. */
 async function assertCanSeeInsights(req: Request, meeting: MeetingDoc) {
   const uid = req.auth!.sub;
   if (meeting.host.toString() === uid) return;
@@ -412,15 +415,28 @@ async function assertCanSeeInsights(req: Request, meeting: MeetingDoc) {
   throw forbidden('Only people who were in this meeting can see its insights');
 }
 
-// AI notes for each session of this meeting, newest first
+const forbiddenSession = () => forbidden('Only people who were in this session can see it');
+
+/** One session's content (notes, transcript): host, or someone who was in THAT session. */
+async function visibleSession(req: Request, meeting: MeetingDoc, sessionId: string) {
+  const session = await MeetingInsightModel.findOne({ meetingCode: meeting.code, sessionId });
+  if (!session) throw notFound('Session not found');
+  if (!canSeeSession(req.auth!.sub, meeting, session)) throw forbiddenSession();
+  return session;
+}
+
+// AI notes for each session of this meeting the user may see, newest first
 router.get('/:code/insights', requireAuth, async (req, res) => {
   const meeting = await findByCode(req.params.code as string);
   await assertCanSeeInsights(req, meeting);
 
-  const sessions = await MeetingInsightModel.find({ meetingCode: meeting.code })
+  const all = await MeetingInsightModel.find({ meetingCode: meeting.code })
     .sort({ startedAt: -1 })
-    .limit(20)
+    .limit(200)
     .lean();
+  const sessions = all.filter((s) => canSeeSession(req.auth!.sub, meeting, s)).slice(0, 20);
+  if (!sessions.length && all.length && meeting.host.toString() !== req.auth!.sub) throw forbiddenSession();
+  await audit(req, 'notes.viewed', { meetingCode: meeting.code });
 
   res.json({
     meeting: toPublicMeeting(meeting),
@@ -441,7 +457,8 @@ router.get('/:code/insights', requireAuth, async (req, res) => {
 // Transcript lines of one session – used to show the evidence behind decisions and tasks
 router.get('/:code/insights/:sessionId/transcript', requireAuth, async (req, res) => {
   const meeting = await findByCode(req.params.code as string);
-  await assertCanSeeInsights(req, meeting);
+  await visibleSession(req, meeting, String(req.params.sessionId));
+  await audit(req, req.query.format === 'txt' ? 'transcript.downloaded' : 'transcript.viewed', { meetingCode: meeting.code, sessionId: String(req.params.sessionId) });
 
   const lines = await TranscriptLineModel.find({ meetingCode: meeting.code, sessionId: String(req.params.sessionId) })
     .sort({ seq: 1 })
@@ -470,9 +487,7 @@ router.get('/:code/insights/:sessionId/transcript', requireAuth, async (req, res
 
 async function editableSession(req: Request) {
   const meeting = await findByCode(req.params.code as string);
-  await assertCanSeeInsights(req, meeting);
-  const session = await MeetingInsightModel.findOne({ meetingCode: meeting.code, sessionId: String(req.params.sessionId) });
-  if (!session) throw notFound('Session not found');
+  const session = await visibleSession(req, meeting, String(req.params.sessionId));
   if (!session.endedAt) throw conflict('Notes can be edited once the meeting has ended');
   return { meeting, session };
 }
@@ -820,6 +835,17 @@ router.get('/:code/ai-behaviour', requireAuth, async (req, res) => {
   res.json({ account, meeting: override, effective: resolve(account, override) });
 });
 
+// Audit trail of this meeting: who joined, viewed or downloaded transcripts and recordings, edited notes,
+// controlled the room, or approved follow-ups. Host only.
+router.get('/:code/audit', requireAuth, async (req, res) => {
+  const meeting = await findByCode(req.params.code as string);
+  assertHost(req, meeting);
+  const events = await auditForMeeting(meeting.code, 300);
+  const ids = [...new Set(events.map((e) => e.actorId).filter((x): x is string => !!x && /^[a-f0-9]{24}$/.test(x)))];
+  const names = new Map((await UserModel.find({ _id: { $in: ids } }).select({ name: 1 }).lean()).map((u) => [String(u._id), u.name]));
+  res.json({ events: events.map((e) => ({ ...e, actorName: e.actorId ? names.get(e.actorId) ?? 'Former user' : 'Guest or system' })) });
+});
+
 router.get('/:code/carryover', requireAuth, async (req, res) => {
   const meeting = await findByCode(req.params.code as string);
   assertHost(req, meeting);
@@ -967,12 +993,24 @@ router.post('/:code/recording/stop', requireAuth, async (req, res) => {
   res.json({ ok: true });
 });
 
+/** A recording is visible to the host and to people who were in the meeting while it was recorded. */
+async function recordingVisible(req: Request, meeting: MeetingDoc, rec: { startedAt: Date; endedAt?: Date | null }) {
+  const sessions = await MeetingInsightModel.find({ meetingCode: meeting.code })
+    .select({ sessionId: 1, meetingCode: 1, startedAt: 1, endedAt: 1, updatedAt: 1, participantUserIds: 1 })
+    .lean();
+  const from = new Date(rec.startedAt).getTime();
+  const to = rec.endedAt ? new Date(rec.endedAt).getTime() : Date.now();
+  return presentDuring(req.auth!.sub, meeting, sessions, from, to);
+}
+
 router.get('/:code/recordings', requireAuth, async (req, res) => {
   const meeting = await findByCode(req.params.code as string);
   await assertCanSeeInsights(req, meeting);
   const list = await RecordingModel.find({ meetingCode: meeting.code }).sort({ startedAt: -1 }).limit(50);
   await Promise.all(list.filter((r) => r.status === 'active').map((r) => refreshRecording(r)));
-  const fresh = await RecordingModel.find({ meetingCode: meeting.code }).sort({ startedAt: -1 }).limit(50).lean();
+  const all = await RecordingModel.find({ meetingCode: meeting.code }).sort({ startedAt: -1 }).limit(50).lean();
+  const fresh = [];
+  for (const r of all) if (await recordingVisible(req, meeting, r)) fresh.push(r);
   res.json({
     recordings: fresh.map((r) => ({
       id: String(r._id),
@@ -992,6 +1030,8 @@ router.get('/:code/recordings/:id/download', requireAuth, async (req, res) => {
   const id = String(req.params.id);
   const rec = /^[a-f0-9]{24}$/.test(id) ? await RecordingModel.findOne({ _id: id, meetingCode: meeting.code }) : null;
   if (!rec || rec.status !== 'complete') throw notFound('Recording not available');
+  if (!(await recordingVisible(req, meeting, rec))) throw forbidden('Only people who were in the meeting while it was recorded can download it');
+  await audit(req, 'recording.downloaded', { meetingCode: meeting.code, target: id });
   const day = rec.startedAt.toISOString().slice(0, 10);
   const safeTitle = meeting.title.replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '-').slice(0, 60) || 'meeting';
   res.redirect(await downloadUrl(rec, `${safeTitle}-${day}.mp4`));

@@ -22,14 +22,15 @@ import { UserMenu } from '../../shared/user-menu';
 import { AuthService } from '../../core/auth.service';
 import { FollowThroughPanel } from './follow-through-panel';
 import { SessionAnalytics } from './session-analytics';
+import { MeetingActivity } from './meeting-activity';
 
-type View = 'notes' | 'transcript' | 'analytics' | 'follow';
+type View = 'notes' | 'transcript' | 'analytics' | 'follow' | 'activity';
 
 /** AI notes for one meeting: recap, decisions/tasks/questions (editable after the meeting), transcript. */
 @Component({
   selector: 'app-insights-page',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [Icon, InsightsView, RouterLink, UserMenu, Modal, FormsModule, FollowThroughPanel, SessionAnalytics],
+  imports: [Icon, InsightsView, RouterLink, UserMenu, Modal, FormsModule, FollowThroughPanel, SessionAnalytics, MeetingActivity],
   templateUrl: './insights-page.html',
   styleUrl: './insights-page.scss',
 })

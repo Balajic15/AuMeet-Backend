@@ -14,6 +14,7 @@ import aiRoutes from './routes/ai.js';
 import analyticsRoutes from './routes/analytics.js';
 import livekitWebhook from './routes/livekitWebhook.js';
 import { csrfGuard } from './middleware/auth.js';
+import { auditMutations } from './services/audit.js';
 import { errorHandler, notFoundHandler } from './middleware/error.js';
 
 function limiter(limit: number) {
@@ -52,6 +53,8 @@ export function createApp() {
 
   app.use(express.json({ limit: '100kb' }));
   app.use('/api', csrfGuard);
+  // Every successful change (and every failed sign-in) goes to the audit log.
+  app.use('/api', auditMutations);
 
   /** Liveness + readiness: 503 while the database is unreachable so orchestrators hold traffic. */
   app.get('/api/health', (_req, res) => {

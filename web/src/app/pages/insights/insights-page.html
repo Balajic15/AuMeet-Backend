@@ -67,6 +67,9 @@
         @if (isHost() && s.endedAt) {
           <button type="button" role="tab" [class.active]="view() === 'follow'" (click)="view.set('follow')">Follow-through</button>
         }
+        @if (isHost()) {
+          <button type="button" role="tab" [class.active]="view() === 'activity'" (click)="view.set('activity')">Activity</button>
+        }
         @if (lines().length) {
           <a class="download" [href]="downloadUrl()" download>
             <app-icon name="download" [size]="16" /> Download .txt
@@ -77,6 +80,8 @@
 
     @if (view() === 'analytics' && session(); as s) {
       <div class="panel"><app-session-analytics [sessionId]="s.sessionId" /></div>
+    } @else if (view() === 'activity') {
+      <div class="panel"><app-meeting-activity [code]="code()" /></div>
     } @else if (view() === 'follow' && session(); as s) {
       <div class="panel"><app-follow-through-panel [code]="code()" [sessionId]="s.sessionId" /></div>
     } @else if (view() === 'transcript') {

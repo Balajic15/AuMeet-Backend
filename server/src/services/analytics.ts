@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { fence, UNTRUSTED_RULES } from '../ai/untrusted.js';
 import type { AiClient } from '../ai/gemini.js';
 import { MeetingInsightModel, TranscriptLineModel } from '../models/Insights.js';
 import type { SessionDoc } from '../memory/types.js';
@@ -196,11 +197,12 @@ export type AnalyticsSummary = ReturnType<typeof summarise>;
 
 const topicKey = (t: string) => t.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, '').replace(/\s+/g, ' ').trim();
 
-export async function analyticsOverview(meetingCodes: string[], days: number, now = new Date()) {
+/** Over the sessions the user may see. */
+export async function analyticsOverview(sessionIds: string[], days: number, now = new Date()) {
   const since = new Date(now.getTime() - days * 86_400_000);
   const before = new Date(since.getTime() - days * 86_400_000);
   const load = (from: Date, to: Date) =>
-    MeetingInsightModel.find({ meetingCode: { $in: meetingCodes }, startedAt: { $gte: from, $lt: to } })
+    MeetingInsightModel.find({ sessionId: { $in: sessionIds }, startedAt: { $gte: from, $lt: to } })
       .sort({ startedAt: -1 })
       .limit(500)
       .select(SESSION_FIELDS)
@@ -286,7 +288,9 @@ export const INSIGHTS_SYSTEM = `You are a meeting-effectiveness coach. You get m
 a period and the previous period of the same length. Give concrete, actionable insights: what improved, what is
 a problem, and what to change (e.g. cancel or shorten meetings that produce no decisions, rebalance who speaks,
 time-box agenda items, follow up on overdue tasks, settle recurring topics once). Ground every point in the
-numbers given; never invent data. If there is too little data, say so in one insight. Plain text, no markdown.`;
+numbers given; never invent data. If there is too little data, say so in one insight. Plain text, no markdown.
+
+${UNTRUSTED_RULES}`;
 
 export async function analyticsInsights(ai: AiClient, o: AnalyticsOverview) {
   const payload = {
@@ -301,5 +305,5 @@ export async function analyticsInsights(ai: AiClient, o: AnalyticsOverview) {
       decisions: s.decisions.agreed, tasks: s.tasks.total, unresolved: s.unresolved, goal: s.goal,
     })),
   };
-  return ai.structured(InsightsOutput, { system: INSIGHTS_SYSTEM, prompt: JSON.stringify(payload), temperature: 0.3 });
+  return ai.structured(InsightsOutput, { system: INSIGHTS_SYSTEM, prompt: fence('MEETING STATISTICS (titles and topics are participant content)', JSON.stringify(payload)), temperature: 0.3 });
 }

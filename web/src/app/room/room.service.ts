@@ -97,17 +97,18 @@ export function saveDevicePrefs(p: DevicePrefs): void {
   }
 }
 
-function roleOf(p: Participant): ParticipantView['role'] {
+/**
+ * Role from the identity, which the join token fixes. Participants can edit their own metadata, so a
+ * "role" claimed there is never trusted. The host is `user:<hostId>`; guests are `guest:<id>`.
+ */
+function roleOf(p: Participant, hostIdentity: string | null): ParticipantView['role'] {
   if (p.isAgent) return 'agent';
-  try {
-    const m = JSON.parse(p.metadata || '{}') as { role?: ParticipantRole };
-    return m.role ?? 'participant';
-  } catch {
-    return 'participant';
-  }
+  if (hostIdentity && p.identity === hostIdentity) return 'host';
+  if (p.identity.startsWith('guest:')) return 'guest';
+  return 'participant';
 }
 
-function toView(p: Participant, isLocal: boolean): ParticipantView {
+function toView(p: Participant, isLocal: boolean, hostIdentity: string | null): ParticipantView {
   const cam = p.getTrackPublication(Track.Source.Camera);
   const screen = p.getTrackPublication(Track.Source.ScreenShare);
   return {
@@ -115,7 +116,7 @@ function toView(p: Participant, isLocal: boolean): ParticipantView {
     name: p.name || p.identity,
     isLocal,
     isAgent: p.isAgent,
-    role: roleOf(p),
+    role: roleOf(p, hostIdentity),
     isSpeaking: p.isSpeaking,
     micOn: p.isMicrophoneEnabled,
     camOn: !!cam?.track && !cam.isMuted,
@@ -274,7 +275,11 @@ export class RoomService implements OnDestroy {
     this.audioHost = el;
   }
 
-  async connect(url: string, token: string, opts: { mic: boolean; cam: boolean; shared?: boolean }): Promise<void> {
+  /** `user:<hostId>` of this meeting (from the server), used to show who the host is. */
+  private hostIdentity: string | null = null;
+
+  async connect(url: string, token: string, opts: { mic: boolean; cam: boolean; shared?: boolean; hostId?: string }): Promise<void> {
+    this.hostIdentity = opts.hostId ? `user:${opts.hostId}` : null;
     this.endReason.set(null);
     this.leaving = false;
     await this.room.connect(url, token);
@@ -424,10 +429,10 @@ export class RoomService implements OnDestroy {
   private refresh(): void {
     const r = this.room;
     if (r.state === ConnectionState.Disconnected) return;
-    const remotes = [...r.remoteParticipants.values()].map((p) => toView(p, false));
+    const remotes = [...r.remoteParticipants.values()].map((p) => toView(p, false, this.hostIdentity));
     // AI agent first, then raised hands, then others in join order; me last.
     remotes.sort((a, b) => Number(b.isAgent) - Number(a.isAgent) || Number(b.handRaised) - Number(a.handRaised));
-    this.participants.set([...remotes, toView(r.localParticipant, true)]);
+    this.participants.set([...remotes, toView(r.localParticipant, true, this.hostIdentity)]);
   }
 
   private onDisconnected(reason?: DisconnectReason): void {

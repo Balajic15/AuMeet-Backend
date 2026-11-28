@@ -79,7 +79,7 @@ describe('meetings', () => {
     const hostGrant = jwtDecode(hostJoin.body.livekit.token);
     expect(hostGrant.sub).toBe(`user:${host.user.id}`);
     expect(hostGrant.video).toMatchObject({ room: code, roomJoin: true, roomAdmin: true, canPublishData: true });
-    expect(JSON.parse(hostGrant.metadata)).toEqual({ role: 'host', userId: host.user.id });
+    expect(JSON.parse(hostGrant.metadata)).toEqual({ role: 'host', userId: host.user.id, name: 'Host', sig: expect.any(String) });
     // AI is on by default → the token dispatches the agent when it creates the room.
     const dispatch = hostGrant.roomConfig?.agents?.[0];
     expect(dispatch?.agentName).toBe('aumeet');

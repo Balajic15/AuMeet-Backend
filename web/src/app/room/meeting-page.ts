@@ -342,6 +342,7 @@ export class MeetingPage implements OnDestroy {
       mic: this.micOn(),
       cam: this.camOn(),
       shared: m.settings.aiEnabled && this.sharedDevice() && this.transcribeMe(),
+      hostId: m.hostId,
     });
     this.phase.set('room');
     this.now.set(Date.now());

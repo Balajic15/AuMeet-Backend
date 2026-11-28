@@ -27,10 +27,11 @@ export interface Ledger {
   risks: Array<{ sessionId: string; meetingCode: string; meetingTitle: string; meetingDate: Date | null; id: string; kind: string; description: string; severity: string }>;
 }
 
-export async function buildLedger(meetingCodes: string[], now = new Date(), maxSessions = 60): Promise<Ledger> {
-  if (!meetingCodes.length) return { tasks: [], decisions: [], risks: [] };
+/** Built only from sessions the user may see. */
+export async function buildLedger(sessionIds: string[], now = new Date(), maxSessions = 60): Promise<Ledger> {
+  if (!sessionIds.length) return { tasks: [], decisions: [], risks: [] };
   const today = now.toISOString().slice(0, 10);
-  const sessions = (await MeetingInsightModel.find({ meetingCode: { $in: meetingCodes } })
+  const sessions = (await MeetingInsightModel.find({ sessionId: { $in: sessionIds } })
     .sort({ startedAt: -1 })
     .limit(maxSessions)
     .select({ sessionId: 1, meetingCode: 1, title: 1, startedAt: 1, 'insights.actionItems': 1, 'insights.decisions': 1, 'insights.risks': 1 })

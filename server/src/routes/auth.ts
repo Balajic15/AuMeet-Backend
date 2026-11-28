@@ -12,6 +12,7 @@ import { RENEW_BELOW_MS, clearSession, issueSession, readCookie } from '../servi
 import { env } from '../config/env.js';
 import { logger } from '../logger.js';
 import { badRequest, conflict, notFound, unauthorized } from '../utils/httpError.js';
+import { audit, auditForActor } from '../services/audit.js';
 
 const router = Router();
 
@@ -23,6 +24,7 @@ const LoginBody = z.object({ email: Email, password: z.string().min(1) });
 
 /** Sets the session cookie and returns the public user (the token itself never reaches page JS). */
 function signIn(res: Response, user: UserDoc, status = 200) {
+  res.locals['auditActor'] = user.id; // the audit log records who signed in
   issueSession(res, user);
   res.status(status).json({ user: toPublicUser(user) });
 }
@@ -79,6 +81,12 @@ router.post('/login', async (req, res) => {
   const ok = user?.passwordHash && (await bcrypt.compare(body.password, user.passwordHash));
   if (!user || !ok) throw unauthorized('Invalid email or password');
   signIn(res, user);
+});
+
+// My own security activity (sign-ins, password changes, sessions revoked …).
+router.get('/audit', requireAuth, async (req, res) => {
+  const events = await auditForActor(req.auth!.sub, 100);
+  res.json({ events: events.filter((e) => e.action.startsWith('auth.') || e.action.startsWith('account.')) });
 });
 
 router.post('/logout', (_req, res) => {
@@ -278,6 +286,7 @@ router.get('/oauth/:provider/callback', async (req, res) => {
     profile = await fetchProfile(provider, String(req.query.code ?? ''));
   } catch (err) {
     logger.warn({ err, provider }, 'OAuth sign-in failed');
+    await audit(req, 'auth.oauth_failed', { actorId: null, meta: { provider } });
     return loginErrorRedirect(res, `Could not sign in with ${providerLabel(provider)}`);
   }
 
@@ -304,6 +313,7 @@ router.get('/oauth/:provider/callback', async (req, res) => {
 
   // The session is a cookie now – no token in the URL at all.
   issueSession(res, user);
+  await audit(req, 'auth.oauth_login', { actorId: user.id, meta: { provider } });
   res.redirect(`${env.WEB_URL}${returnUrl}`);
 });
 

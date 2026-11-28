@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { fence, UNTRUSTED_RULES } from './untrusted.js';
 import type { Behaviour } from './behaviour.js';
 import type { StructuredCall } from './gemini.js';
 import { formatUtterances, type Utterance } from './transcript.js';
@@ -38,7 +39,9 @@ the LATEST line now.
 - "room_question": a genuine question to the whole group that the AI could usefully answer from the meeting,
   its notes or documents – only counts when ROOM QUESTIONS are allowed. Questions to a named colleague,
   rhetorical questions and small talk never count.
-- "none": everything else. When in doubt, "none" – people talk to each other far more than to the AI.`;
+- "none": everything else. When in doubt, "none" – people talk to each other far more than to the AI.
+
+${UNTRUSTED_RULES}`;
 
 export function routePrompt(i: RouteInput): string {
   return [
@@ -49,10 +52,9 @@ export function routePrompt(i: RouteInput): string {
       ? `The AI last answered ${i.lastAnswer.to} ${i.lastAnswer.secondsAgo}s ago: "${i.lastAnswer.text.slice(0, 300)}"`
       : 'The AI has not answered anyone yet.',
     '',
-    'RECENT TRANSCRIPT:',
-    formatUtterances(i.recent, 'UTC') || '(empty)',
+    fence('RECENT TRANSCRIPT', formatUtterances(i.recent, 'UTC') || '(empty)'),
     '',
-    `LATEST LINE: ${i.line.speakerName}: ${i.line.text}`,
+    fence('LATEST LINE', `${i.line.speakerName}: ${i.line.text}`),
     i.lastAnswer && i.lastAnswer.to === i.line.speakerName
       ? `(${i.line.speakerName} is the person the AI answered ${i.lastAnswer.secondsAgo}s ago.)`
       : '',

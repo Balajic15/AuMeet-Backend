@@ -1,8 +1,10 @@
 import { z } from 'zod';
+import { fence, UNTRUSTED_RULES } from '../ai/untrusted.js';
 import type { AiClient } from '../ai/gemini.js';
 import { MemoryChunkModel } from '../models/MemoryChunk.js';
 import { env } from '../config/env.js';
 import { logger } from '../logger.js';
+import type { AccessScope } from './access.js';
 
 export interface MemoryHit {
   meetingCode: string;
@@ -27,21 +29,34 @@ export function dot(a: number[], b: number[]): number {
 }
 
 /** Semantic search over the given meetings (embeddings are unit-length, so dot = cosine). */
-export async function searchMemory(ai: AiClient, meetingCodes: string[], query: string, k = 8): Promise<MemoryHit[]> {
-  if (meetingCodes.length === 0 || !query.trim()) return [];
+/** Session chunks only from sessions the user may see; documents from their meetings. */
+const scopeFilter = (scope: AccessScope) => ({
+  meetingCode: { $in: scope.meetingCodes },
+  $or: [{ sessionId: { $in: scope.sessionIds } }, { kind: 'document' }],
+});
+const inScope = (scope: AccessScope) => {
+  const sessions = new Set(scope.sessionIds);
+  const codes = new Set(scope.meetingCodes);
+  return (h: { meetingCode: string; sessionId: string; kind: string }) => codes.has(h.meetingCode) && (sessions.has(h.sessionId) || h.kind === 'document');
+};
+
+export async function searchMemory(ai: AiClient, scope: AccessScope, query: string, k = 8): Promise<MemoryHit[]> {
+  if (scope.meetingCodes.length === 0 || !query.trim()) return [];
+  const meetingCodes = scope.meetingCodes;
   const [q] = await ai.embed([query], 'query');
   if (!q) return [];
 
   if (env.MEMORY_VECTOR_INDEX) {
     try {
-      return await atlasVectorSearch(env.MEMORY_VECTOR_INDEX, q, meetingCodes, k);
+      // The index filters by meeting; sessions are filtered here.
+      return (await atlasVectorSearch(env.MEMORY_VECTOR_INDEX, q, meetingCodes, k * 4)).filter(inScope(scope)).slice(0, k);
     } catch (err) {
       // Index missing/building, or not on Atlas: fall back to in-app search.
       logger.warn({ err }, 'Atlas vector search failed – using in-app search');
     }
   }
 
-  const chunks = await MemoryChunkModel.find({ meetingCode: { $in: meetingCodes } })
+  const chunks = await MemoryChunkModel.find(scopeFilter(scope) as never)
     .sort({ startedAt: -1 })
     .limit(SCAN_LIMIT)
     .select({ meetingCode: 1, sessionId: 1, title: 1, startedAt: 1, kind: 1, text: 1, embedding: 1 })
@@ -105,15 +120,16 @@ export const ANSWER_SYSTEM = `You answer questions about a team's past meetings 
 - If neither contains the answer, say you couldn't find it in their meetings. Don't guess.
 - Be precise about status: say whether something was agreed, only proposed, or still unresolved.
 - Mention which meeting and date the answer comes from when useful.
-- Answer in the language of the question. Plain text, no markdown.`;
+- Answer in the language of the question. Plain text, no markdown.
+
+${UNTRUSTED_RULES}`;
 
 export function answerPrompt(question: string, hits: MemoryHit[], ledger = ''): string {
   const excerpts = hits.map((h, i) => `[${i + 1}] ${h.text}`).join('\n\n');
   return [
     `QUESTION: ${question}`,
     '',
-    'EXCERPTS:',
-    excerpts || '(none)',
-    ledger ? `\nSTATUS LEDGER (newest meetings first):\n${ledger}` : '',
+    fence('EXCERPTS', excerpts || '(none)'),
+    ledger ? `\n${fence('STATUS LEDGER (newest meetings first)', ledger)}` : '',
   ].join('\n');
 }

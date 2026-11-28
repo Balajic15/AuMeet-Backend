@@ -39,6 +39,8 @@ const EnvSchema = z.object({
   MAIL_FROM: z.string().default('AuMeet <no-reply@aumeet.local>'),
   // Delete transcripts, notes and memory older than this many days (0 = keep forever).
   DATA_RETENTION_DAYS: z.coerce.number().int().min(0).default(0),
+  // Audit events are kept this long (TTL index on audit_events).
+  AUDIT_RETENTION_DAYS: z.coerce.number().int().min(30).default(365),
   // Name of an Atlas Vector Search index on memory_chunks.embedding (optional; in-app search otherwise).
   MEMORY_VECTOR_INDEX: z.string().optional(),
   // Recording (LiveKit Egress → S3-compatible storage: AWS S3, Cloudflare R2, MinIO…). Off unless set.
