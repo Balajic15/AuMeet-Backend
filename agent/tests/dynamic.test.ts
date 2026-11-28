@@ -92,7 +92,7 @@ describe('router', () => {
   it('never answers room questions unless the host allows it', async () => {
     const call = vi.fn(async () => ({ respond: true, kind: 'room_question', reason: 'q' })) as never;
     const route = geminiRouter(call);
-    const input = { line: line(3, 'What is the budget?'), recent: [], behaviour: base, answerRoomQuestions: false, lastAnswer: null, participants: ['Asha'] };
+    const input = { line: line(3, 'What is the budget?'), recent: [], behaviour: base, answerRoomQuestions: false, lastAnswer: null, participants: ['Asha'], peoplePresent: 2 };
     expect((await route(input)).respond).toBe(false);
     expect((await route({ ...input, answerRoomQuestions: true })).respond).toBe(true);
     expect(routePrompt(input)).toContain('AI name: Nova (also heard as: no va, नोवा)');

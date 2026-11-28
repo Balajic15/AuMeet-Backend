@@ -15,6 +15,9 @@ const Env = z.object({
   GEMINI_FALLBACK_MODELS: z.string().default('gemini-3-flash-preview,gemini-3.1-flash-lite'),
   // Internal "thinking" before answering. 'minimal' keeps replies fast.
   GEMINI_THINKING: z.enum(['minimal', 'low', 'off']).default('minimal'),
+  // Deadline per model attempt for spoken/chat replies before trying the next model. Google rejects
+  // deadlines under 10 s, so values below that are raised to 10.
+  VOICE_LLM_TIMEOUT_SECONDS: z.coerce.number().min(1).max(120).default(12),
   CARTESIA_API_KEY: z.string().min(1, 'CARTESIA_API_KEY is required'),
   CARTESIA_VOICE_ID: z.string().optional(),
   CARTESIA_MODEL: z.string().default('sonic-3.6'),

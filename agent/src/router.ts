@@ -26,6 +26,8 @@ export interface RouteInput {
   /** The AI's last spoken answer: to whom, what, how long ago. */
   lastAnswer: { to: string; text: string; secondsAgo: number } | null;
   participants: string[];
+  /** How many people (not counting the AI) are in the room right now. */
+  peoplePresent: number;
 }
 
 const SYSTEM = `You route lines of a live meeting transcript. Decide whether the AI participant should answer
@@ -39,7 +41,10 @@ the LATEST line now.
 - "room_question": a genuine question to the whole group that the AI could usefully answer from the meeting,
   its notes or documents – only counts when ROOM QUESTIONS are allowed. Questions to a named colleague,
   rhetorical questions and small talk never count.
-- "none": everything else. When in doubt, "none" – people talk to each other far more than to the AI.
+- Alone with the AI: when nobody else is in the room, the person can only be talking to the AI. Their questions,
+  greetings ("hello?", "hi") and requests – spoken or typed in chat – are "direct". Only obvious self-talk or
+  thinking aloud ("hmm, let me see") is "none".
+- "none": everything else. When others are present and in doubt, "none" – people talk to each other far more than to the AI.
 
 ${UNTRUSTED_RULES}`;
 
@@ -47,6 +52,8 @@ export function routePrompt(i: RouteInput): string {
   return [
     `AI name: ${i.behaviour.name}${i.behaviour.wakeWords.length ? ` (also heard as: ${i.behaviour.wakeWords.join(', ')})` : ''}`,
     `Participants: ${i.participants.join(', ') || 'unknown'}`,
+    `People in the room right now besides the AI: ${i.peoplePresent}${i.peoplePresent <= 1 ? ' – they are alone with the AI, so questions and greetings are almost certainly meant for it ("direct")' : ''}`,
+    `Channel of the latest line: ${i.line.channel === 'chat' ? 'typed in the meeting chat' : 'spoken'}`,
     `ROOM QUESTIONS: ${i.answerRoomQuestions ? 'allowed' : 'not allowed'}`,
     i.lastAnswer
       ? `The AI last answered ${i.lastAnswer.to} ${i.lastAnswer.secondsAgo}s ago: "${i.lastAnswer.text.slice(0, 300)}"`

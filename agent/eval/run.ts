@@ -409,9 +409,9 @@ const scenarios: Record<string, () => Promise<{ checks: Check[]; ms: number[] }>
       ['Ben', 'And Ravi owns the migration plan.'],
     ]);
     const b = behaviourWith();
-    const ask = async (who: string, text: string, opts: { room?: boolean; last?: boolean } = {}) =>
+    const ask = async (who: string, text: string, opts: { room?: boolean; last?: boolean; alone?: boolean; chat?: boolean } = {}) =>
       route({
-        line: script([[who, text]])[0]!, recent, behaviour: b, answerRoomQuestions: !!opts.room, participants: ['Asha', 'Ben', 'Chen', 'Ravi'],
+        line: { ...script([[who, text]])[0]!, channel: opts.chat ? 'chat' : 'voice' }, recent, behaviour: b, answerRoomQuestions: !!opts.room, participants: ['Asha', 'Ben', 'Chen', 'Ravi'], peoplePresent: opts.alone ? 1 : 4,
         lastAnswer: opts.last ? { to: 'Chen', text: 'You agreed on PostgreSQL for billing.', secondsAgo: 6 } : null,
       });
     const t = Date.now();
@@ -422,6 +422,18 @@ const scenarios: Record<string, () => Promise<{ checks: Check[]; ms: number[] }>
     const colleague = await ask('Asha', 'Ravi, can you send the spec today?', { room: true });
     const smalltalk = await ask('Ben', "How was everyone's weekend?", { room: true });
     const misheard = await ask('Asha', 'Oh meat, can you summarise that?');
+    // Alone with the AI (the situation from a real meeting): a plain question or greeting is for the AI.
+    const alone = script([
+      ['AuMeet AI', "Hi Balaji, I'm AuMeet, just joining to take notes and help track action items for your meeting today."],
+      ['Balaji', 'Hi.'],
+    ]);
+    const askAlone = (text: string, chat: boolean) =>
+      route({
+        line: { ...script([['Balaji', text]])[0]!, id: 3, channel: chat ? 'chat' : 'voice' }, recent: alone, behaviour: b,
+        answerRoomQuestions: false, participants: ['Balaji'], peoplePresent: 1, lastAnswer: null,
+      });
+    const aloneChat = await askAlone("What's the plan today?", true);
+    const aloneHello = await askAlone('Hello?', false);
     return {
       ms: [Date.now() - t],
       checks: [
@@ -432,6 +444,8 @@ const scenarios: Record<string, () => Promise<{ checks: Check[]; ms: number[] }>
         check('leaves questions to colleagues alone', !colleague.respond, colleague),
         check('ignores small talk', !smalltalk.respond, smalltalk),
         check('understands a misheard name', misheard.respond, misheard),
+        check('answers a chat question when alone with the AI', aloneChat.respond, aloneChat),
+        check('answers "hello?" when alone with the AI', aloneHello.respond, aloneHello),
       ],
     };
   },

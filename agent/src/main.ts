@@ -140,7 +140,7 @@ export default defineAgent<ProcData>({
       });
     const brain =
       models.length > 1
-        ? new llm.FallbackAdapter({ llms: models.map(voiceLlm), attemptTimeout: 8, maxRetryPerLLM: 0 })
+        ? new llm.FallbackAdapter({ llms: models.map(voiceLlm), attemptTimeout: Math.max(10, cfg.VOICE_LLM_TIMEOUT_SECONDS), maxRetryPerLLM: 0 })
         : voiceLlm(models[0]!);
     const voiceOut = new cartesia.TTS({
       apiKey: cfg.CARTESIA_API_KEY,
@@ -487,6 +487,7 @@ export default defineAgent<ProcData>({
               ? { to: lastAddressedName, text: lastAgentText, secondsAgo: Math.round((Date.now() - lastAgentReplyAt) / 1000) }
               : null,
           participants: [...people.values()].map((x) => x.name),
+          peoplePresent: presentNames().length,
         });
         logger.debug({ respond: d.respond, kind: d.kind, reason: d.reason }, 'route');
         // Only if nobody has said anything since and the AI is free – otherwise the moment has passed.
@@ -516,7 +517,29 @@ export default defineAgent<ProcData>({
       remember(p);
       await appendToContext('user', `${nameOf(p)} (in chat): ${text}`);
       analyzer.notify();
-      if (isWake(text) || /^@ai\b/i.test(text)) await replyInChat(nameOf(p));
+      if (isWake(text) || /^@ai\b/i.test(text)) return replyInChat(nameOf(p));
+      if (!behaviour) return;
+      // Like speech: the model judges whether the message is meant for the AI (a question while alone with it,
+      // a follow-up to its last answer, a misspelled name …).
+      const line = transcript.all[transcript.all.length - 1]!;
+      try {
+        const d = await route({
+          line,
+          recent: transcript.all.slice(-12),
+          behaviour,
+          answerRoomQuestions: prep.replyMode === 'any',
+          lastAnswer:
+            lastAgentReplyAt !== null && lastAddressedName
+              ? { to: lastAddressedName, text: lastAgentText, secondsAgo: Math.round((Date.now() - lastAgentReplyAt) / 1000) }
+              : null,
+          participants: [...people.values()].map((x) => x.name),
+          peoplePresent: presentNames().length,
+        });
+        logger.debug({ respond: d.respond, kind: d.kind, reason: d.reason, channel: 'chat' }, 'route');
+        if (d.respond) await replyInChat(nameOf(p));
+      } catch (err) {
+        logger.debug({ err }, 'chat routing failed');
+      }
     });
 
     const replyInChat = async (speaker: string) => {
