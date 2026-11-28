@@ -26,6 +26,8 @@ import {
   type RemoteTrackPublication,
 } from '@livekit/rtc-node';
 import { geminiStructured, parseModels } from './gemini.js';
+import { geminiKeysFromEnv, modelsForTask } from './ai/pool.js';
+import { UsageMeter } from './ai/usage.js';
 import { ThinkingLevel } from '@google/genai';
 import { Moderator } from './intervene/moderator.js';
 import { geminiBrain } from './brain.js';
@@ -113,7 +115,9 @@ export default defineAgent<ProcData>({
     const logger = log().child({ room: ctx.room.name });
     const info = parseDispatch(ctx.job.metadata, ctx.job.room?.name ?? 'unknown');
     const models = parseModels(cfg.GEMINI_MODEL, cfg.GEMINI_FALLBACK_MODELS);
-    const structured = geminiStructured({ apiKey: cfg.GOOGLE_API_KEY, models, thinking: cfg.GEMINI_THINKING });
+    const apiKeys = geminiKeysFromEnv(process.env);
+    const usage = new UsageMeter('agent');
+    const structured = geminiStructured({ apiKeys, models, thinking: cfg.GEMINI_THINKING, env: process.env, onUsage: (u) => usage.add(u) });
 
     // ---------- models ----------
     // Speech-to-text gets the AI's configured name as a key term (set once the behaviour is loaded).
@@ -132,19 +136,27 @@ export default defineAgent<ProcData>({
     let sttShared = makeStt([], true);
     const voices = new SharedDeviceVoices();
     // Voice replies: same fast models, with automatic fallback when one is overloaded or slow.
-    const voiceLlm = (model: string) =>
+    const voiceLlm = (model: string, apiKey: string) =>
       new google.LLM({
-        apiKey: cfg.GOOGLE_API_KEY,
+        apiKey,
         model,
         temperature: 0.4,
         ...(cfg.GEMINI_THINKING !== 'off'
           ? { thinkingConfig: { thinkingLevel: cfg.GEMINI_THINKING === 'low' ? ThinkingLevel.LOW : ThinkingLevel.MINIMAL } }
           : {}),
       });
+    // Every (model, key) pair is a fallback option, interleaved so an overloaded model or a rate-limited key is
+    // skipped after one attempt. A random starting key spreads meetings across keys.
+    const voiceModels = modelsForTask('voice', models, process.env);
+    const offset = Math.floor(Math.random() * apiKeys.length);
+    const voiceOptions: Array<[string, string]> = [];
+    for (let i = 0; i < apiKeys.length; i++) {
+      voiceModels.forEach((m, j) => voiceOptions.push([m, apiKeys[(offset + i + j) % apiKeys.length]!]));
+    }
     const brain =
-      models.length > 1
-        ? new llm.FallbackAdapter({ llms: models.map(voiceLlm), attemptTimeout: Math.max(10, cfg.VOICE_LLM_TIMEOUT_SECONDS), maxRetryPerLLM: 0 })
-        : voiceLlm(models[0]!);
+      voiceOptions.length > 1
+        ? new llm.FallbackAdapter({ llms: voiceOptions.map(([m, k]) => voiceLlm(m, k)), attemptTimeout: Math.max(10, cfg.VOICE_LLM_TIMEOUT_SECONDS), maxRetryPerLLM: 0 })
+        : voiceLlm(voiceModels[0]!, apiKeys[0]!);
     const voiceOut = new cartesia.TTS({
       apiKey: cfg.CARTESIA_API_KEY,
       model: cfg.CARTESIA_MODEL,
@@ -157,6 +169,7 @@ export default defineAgent<ProcData>({
     if (cfg.MONGODB_URI) {
       try {
         mongo = await connectMongo(cfg.MONGODB_URI);
+        usage.attach(mongo.db);
       } catch (err) {
         logger.warn({ err }, 'MongoDB unavailable – transcript and insights will not be saved');
       }
@@ -238,7 +251,7 @@ export default defineAgent<ProcData>({
         'continuity loaded',
       );
       const searchDocs = historySearcher(mongo.db, {
-        apiKey: cfg.GOOGLE_API_KEY,
+        apiKeys,
         model: cfg.EMBEDDING_MODEL,
         dims: cfg.EMBEDDING_DIMS,
         meetingCode: info.meetingCode,
@@ -255,7 +268,7 @@ export default defineAgent<ProcData>({
         },
       });
       const searchHistory = historySearcher(mongo.db, {
-        apiKey: cfg.GOOGLE_API_KEY,
+        apiKeys,
         model: cfg.EMBEDDING_MODEL,
         dims: cfg.EMBEDDING_DIMS,
         meetingCode: memoryCodes,
@@ -774,6 +787,7 @@ export default defineAgent<ProcData>({
       } catch (err) {
         logger.warn({ err }, 'final analysis failed');
       }
+      await usage.close();
       await mongo?.close();
     });
 

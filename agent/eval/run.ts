@@ -10,6 +10,7 @@
 import { initializeLogger } from '@livekit/agents';
 import { config } from '../src/config.js';
 import { geminiStructured } from '../src/gemini.js';
+import { geminiKeysFromEnv } from '../src/ai/pool.js';
 import { mergeCopilot, normalize } from '../src/intel/normalize.js';
 import { COPILOT_SYSTEM, copilotPrompt } from '../src/intel/copilot.js';
 import { ANALYST_SYSTEM, analystPrompt } from '../src/intel/prompt.js';
@@ -23,7 +24,7 @@ import type { Utterance } from '../src/transcript.js';
 initializeLogger({ pretty: false, level: 'warn' });
 const cfg = config();
 import { parseModels } from '../src/gemini.js';
-const call = geminiStructured({ apiKey: cfg.GOOGLE_API_KEY, models: parseModels(cfg.GEMINI_MODEL, cfg.GEMINI_FALLBACK_MODELS), thinking: cfg.GEMINI_THINKING });
+const call = geminiStructured({ apiKeys: geminiKeysFromEnv(process.env), models: parseModels(cfg.GEMINI_MODEL, cfg.GEMINI_FALLBACK_MODELS), thinking: cfg.GEMINI_THINKING, env: process.env });
 const brain = geminiBrain(call);
 const route = geminiRouter(call);
 // The real seed profile the server puts in MongoDB.

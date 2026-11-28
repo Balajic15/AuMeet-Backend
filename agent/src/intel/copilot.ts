@@ -14,7 +14,7 @@ import { CopilotOutput, type EarlierItemRef, type Insights, type PastDecisionRef
 export type CopilotFn = (system: string, prompt: string) => Promise<CopilotOutput>;
 
 export function geminiCopilot(call: StructuredCall): CopilotFn {
-  return (system, prompt) => call(CopilotOutput, { system, prompt, temperature: 0.3 });
+  return (system, prompt) => call(CopilotOutput, { system, prompt, temperature: 0.3, task: 'copilot' });
 }
 
 export const COPILOT_SYSTEM = `You are the quiet copilot of a live team meeting: suggestions appear on participants' screens and are

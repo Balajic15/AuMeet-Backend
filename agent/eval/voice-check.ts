@@ -11,6 +11,7 @@ import { ThinkingLevel } from '@google/genai';
 import { resolveBehaviour } from '../src/behaviour.js';
 import { config } from '../src/config.js';
 import { parseModels } from '../src/gemini.js';
+import { geminiKeysFromEnv } from '../src/ai/pool.js';
 import { meetingInstructions, notesSection, replyInstruction } from '../src/prompts.js';
 
 initializeLogger({ pretty: false, level: 'warn' });
@@ -20,7 +21,7 @@ const behaviour = resolveBehaviour(SEED)!;
 const models = parseModels(cfg.GEMINI_MODEL, cfg.GEMINI_FALLBACK_MODELS);
 const one = (model: string) =>
   new google.LLM({
-    apiKey: cfg.GOOGLE_API_KEY,
+    apiKey: geminiKeysFromEnv(process.env)[0]!,
     model,
     temperature: 0.4,
     ...(cfg.GEMINI_THINKING !== 'off' ? { thinkingConfig: { thinkingLevel: cfg.GEMINI_THINKING === 'low' ? ThinkingLevel.LOW : ThinkingLevel.MINIMAL } } : {}),

@@ -72,7 +72,7 @@ export type RouteFn = (input: RouteInput) => Promise<RouteDecision>;
 
 export function geminiRouter(call: StructuredCall): RouteFn {
   return async (input) => {
-    const d = await call(RouteDecision, { system: SYSTEM, prompt: routePrompt(input), temperature: 0 });
+    const d = await call(RouteDecision, { system: SYSTEM, prompt: routePrompt(input), temperature: 0, task: 'router' });
     // A room question only counts when the host allows it.
     if (d.kind === 'room_question' && !input.answerRoomQuestions) return { ...d, respond: false };
     return { ...d, respond: d.respond && d.kind !== 'none' };

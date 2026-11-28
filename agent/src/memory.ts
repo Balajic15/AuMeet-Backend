@@ -1,5 +1,6 @@
 import { GoogleGenAI } from '@google/genai';
 import type { Db } from 'mongodb';
+import { classify, KeyPool, retryAfterMs } from './ai/pool.js';
 
 /*
  * The AI's memory of earlier sessions of the SAME meeting link (e.g. a weekly stand-up).
@@ -67,17 +68,34 @@ export interface HistoryHit {
  */
 export function historySearcher(
   db: Db,
-  opts: { apiKey: string; model: string; dims: number; meetingCode: string | (() => string[]); source?: 'history' | 'documents' },
+  opts: { apiKeys: string[]; model: string; dims: number; meetingCode: string | (() => string[]); source?: 'history' | 'documents' },
 ) {
-  const ai = new GoogleGenAI({ apiKey: opts.apiKey });
+  const pool = new KeyPool(opts.apiKeys, (apiKey) => new GoogleGenAI({ apiKey }));
   const col = db.collection('memory_chunks');
 
+  /** Embeds with the next key; a rate-limited or invalid key is skipped. */
+  const embed = async (query: string) => {
+    let last: unknown;
+    for (const key of pool.order()) {
+      try {
+        return await key.client.models.embedContent({
+          model: opts.model,
+          contents: [query],
+          config: { taskType: 'RETRIEVAL_QUERY', outputDimensionality: opts.dims },
+        });
+      } catch (err) {
+        last = err;
+        const kind = classify(err);
+        if (kind === 'quota') pool.cool(key, retryAfterMs(err));
+        else if (kind === 'auth') pool.cool(key, 60 * 60_000);
+        else throw err;
+      }
+    }
+    throw last;
+  };
+
   return async (query: string, k = 5): Promise<HistoryHit[]> => {
-    const res = await ai.models.embedContent({
-      model: opts.model,
-      contents: [query],
-      config: { taskType: 'RETRIEVAL_QUERY', outputDimensionality: opts.dims },
-    });
+    const res = await embed(query);
     const raw = res.embeddings?.[0]?.values ?? [];
     const len = Math.sqrt(raw.reduce((s, x) => s + x * x, 0)) || 1;
     const q = raw.map((x) => x / len);

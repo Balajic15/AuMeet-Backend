@@ -7,6 +7,7 @@ const Env = z.object({
   LIVEKIT_API_SECRET: z.string().min(1, 'LIVEKIT_API_SECRET is required'),
   AGENT_NAME: z.string().default('aumeet'),
   DEEPGRAM_API_KEY: z.string().min(1, 'DEEPGRAM_API_KEY is required'),
+  // First Gemini key; more keys: GEMINI_API_KEY_2, GEMINI_API_KEY_3 … or GEMINI_API_KEYS=a,b,c (rotated, see ai/pool.ts).
   GOOGLE_API_KEY: z.string().min(1, 'GOOGLE_API_KEY is required'),
   // Fast models first: a live conversation needs ~1 s answers. Measured Nov 2026:
   // 3.5-flash-lite ~1 s, 3-flash-preview ~1.3 s, 3.5-flash 10–100 s under load.

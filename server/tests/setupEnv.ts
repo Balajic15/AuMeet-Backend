@@ -13,6 +13,9 @@ for (const key of [
   delete process.env[key];
 }
 
+// Extra Gemini keys too (GEMINI_API_KEY_2 …, GEMINI_API_KEYS).
+for (const key of Object.keys(process.env)) if (/^GEMINI_API_KEY/.test(key)) delete process.env[key];
+
 process.env.NODE_ENV = 'test';
 process.env.MONGODB_URI = 'mongodb://placeholder'; // real URI comes from mongodb-memory-server
 process.env.JWT_SECRET = 'test-secret-at-least-16-chars';

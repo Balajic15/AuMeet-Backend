@@ -153,5 +153,5 @@ export function brainPrompt(i: BrainInput): string {
 export type BrainFn = (input: BrainInput) => Promise<BrainDecision>;
 
 export function geminiBrain(call: StructuredCall): BrainFn {
-  return (input) => call(BrainDecision, { system: BRAIN_SYSTEM, prompt: brainPrompt(input), temperature: 0.4 });
+  return (input) => call(BrainDecision, { system: BRAIN_SYSTEM, prompt: brainPrompt(input), temperature: 0.4, task: 'brain' });
 }
