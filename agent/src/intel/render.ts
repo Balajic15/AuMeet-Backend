@@ -1,4 +1,5 @@
 import type { Insights } from './schema.js';
+import { renderIssues } from '../jira/flow.js';
 import { renderScreen } from '../screen/vision.js';
 
 const names = (xs: string[]) => xs.join(', ');
@@ -70,6 +71,9 @@ export function renderNotes(i: Insights): string {
     lines.push('Key points:');
     for (const k of points) lines.push(`- ${k.point}`);
   }
+
+  const issues = renderIssues(i.issues ?? []);
+  if (issues) lines.push(issues);
 
   const screen = renderScreen(i.screen);
   if (screen) lines.push('Shared screen (what the AI saw):', screen);

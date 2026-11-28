@@ -38,6 +38,9 @@ import { AGENT_DISPLAY_NAME, config, tileName } from './config.js';
 import { verifyParticipant } from './identity.js';
 import { ScreenWatcher } from './screen/watcher.js';
 import { renderScreen, ScreenIntel, type ScreenPolicy } from './screen/vision.js';
+import { downscale, encodePng } from './screen/image.js';
+import { IssueDesk } from './jira/flow.js';
+import { internalClient } from './jira/server.js';
 import { fence } from './untrusted.js';
 import { languageName, voiceLanguage } from './language.js';
 import { ParticipantListener } from './listener.js';
@@ -313,6 +316,19 @@ export default defineAgent<ProcData>({
         return view ? fence('SHARED SCREEN', renderScreen({ sharing: w.name, observations: [view] }, 1)) : 'I could not look at the screen just now.';
       },
     });
+    tools['jira_issue'] = llm.tool({
+      description:
+        'Create or work on a Jira issue (bug, user story or task) from the conversation – use whenever someone asks to ' +
+        'create, file, raise or log a ticket/bug/story, to take a screenshot or record the screen for it, or answers ' +
+        'questions about the ticket. Say what it returns.',
+      parameters: z.object({ request: z.string().describe("What the participant asked for, in their words") }),
+      execute: async ({ request }) => {
+        if (!desk || !lastSpeaker) return 'Jira issues are not available in this meeting.';
+        const line = [...transcript.all].reverse().find((u) => !u.isAgent && u.speakerId.startsWith(lastSpeaker!.identity)) ?? transcript.all.at(-1)!;
+        const r = await desk.handle(line, lastSpeaker, request);
+        return r.say ? `Say this to them: ${r.say}` : 'Nothing to say about the ticket right now.';
+      },
+    });
     tools['set_speaking_mode'] = llm.tool({
       description:
         'Switch whether you speak up on your own. Use when someone asks you to stay quiet / stop interrupting ("quiet"), ' +
@@ -423,7 +439,7 @@ export default defineAgent<ProcData>({
       },
       onError: (err) => logger.warn({ err }, 'screen analysis failed'),
     });
-    const screenWatchers = new Map<string, { watcher: ScreenWatcher; name: string }>();
+    const screenWatchers = new Map<string, { watcher: ScreenWatcher; name: string; trackSid: string }>();
     const stopWatching = (identity: string) => {
       const w = screenWatchers.get(identity);
       if (!w) return;
@@ -450,10 +466,45 @@ export default defineAgent<ProcData>({
         changeThreshold: () => screenPolicy().changeThreshold,
         onChange: async (img) => !!(await screenIntel.analyse(img, name, 'change')),
       });
-      screenWatchers.set(p.identity, { watcher, name });
+      screenWatchers.set(p.identity, { watcher, name, trackSid: track.sid ?? '' });
       screenIntel.setSharing(name);
       logger.info({ who: p.identity }, 'watching shared screen (allowed by the sharer)');
     };
+    // ---------- Jira issues from the conversation ----------
+    const desk = mongo
+      ? new IssueDesk({
+          db: mongo.db,
+          call: structured,
+          meetingCode: info.meetingCode,
+          sessionId: ctx.job.id,
+          hostId: () => hostId,
+          transcript: () => transcript.all,
+          screen: () => analyzer.insights.screen ?? null,
+          internal: internalClient(cfg.AUMEET_API_URL, cfg.LIVEKIT_API_SECRET),
+          screenshot: async () => {
+            const w = [...screenWatchers.values()][0];
+            if (!w?.watcher.latest) return null;
+            const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+            return { name: `screenshot-${w.name.replace(/[^\w-]+/g, '_')}-${stamp}.png`, data: encodePng(downscale(w.watcher.latest, 1920)) };
+          },
+          screenTrack: () => {
+            const w = [...screenWatchers.values()][0];
+            return w?.trackSid ? { sid: w.trackSid, sharer: w.name } : null;
+          },
+          onChange: (drafts) => {
+            const updated = analyzer.setIssues(drafts);
+            void sendInsights(updated);
+            store?.save(updated, [...people.values()]).catch(() => {});
+            latestNotes = renderNotes(updated);
+            void refreshInstructions();
+          },
+        })
+      : null;
+    void desk?.reload().catch(() => {});
+    /** Who the AI is talking to (for the Jira tool, which the voice model calls without knowing identities). */
+    let lastSpeaker: { identity: string; name: string; userId: string | null } | null = null;
+    const speakerOf = (p: RemoteParticipant) => ({ identity: p.identity, name: nameOf(p), userId: userIdOf(p) });
+
     const moderator = new Moderator({
       enabled: info.proactive,
       title: info.title,
@@ -566,9 +617,26 @@ export default defineAgent<ProcData>({
       const answer = (why: string) => {
         lastAddressedBy = speakerKey;
         lastAddressedName = who;
+        lastSpeaker = { identity: p.identity, name: who, userId: voice === null ? userIdOf(p) : null };
         voiceOut.updateOptions({ language: voiceLanguage(language) });
         session.generateReply({ instructions: replyInstruction(who, languageName(language), why), allowInterruptions: true });
       };
+
+      // A Jira draft is open: answers about it go to the issue workflow (without needing the AI's name).
+      if (desk?.active) {
+        try {
+          const r = await desk.handle(line, { identity: p.identity, name: who, userId: voice === null ? userIdOf(p) : null });
+          if (r.acted) {
+            if (r.say && agentIdle()) {
+              voiceOut.updateOptions({ language: voiceLanguage(language) });
+              session.say(r.say, { allowInterruptions: true });
+            }
+            return;
+          }
+        } catch (err) {
+          logger.warn({ err }, 'issue workflow failed');
+        }
+      }
 
       // Fast path: the configured name (or one of its spellings) was said.
       if (isWake(text)) return answer('they addressed you by name');
@@ -646,7 +714,20 @@ export default defineAgent<ProcData>({
       remember(p);
       await appendToContext('user', `${nameOf(p)} (in chat): ${text}`);
       analyzer.notify();
-      if (isWake(text) || /^@ai\b/i.test(text)) return replyInChat(nameOf(p));
+      const chatLine = transcript.all[transcript.all.length - 1]!;
+      const addressed = isWake(text) || /^@ai\b/i.test(text);
+      if (desk && (desk.active || addressed)) {
+        try {
+          const r = await desk.handle(chatLine, speakerOf(p), undefined, addressed);
+          if (r.acted) {
+            if (r.say) await sendChat(r.say);
+            return;
+          }
+        } catch (err) {
+          logger.warn({ err }, 'issue workflow failed');
+        }
+      }
+      if (addressed) return replyInChat(nameOf(p));
       if (!behaviour) return;
       // Like speech: the model judges whether the message is meant for the AI (a question while alone with it,
       // a follow-up to its last answer, a misspelled name …).
@@ -665,11 +746,28 @@ export default defineAgent<ProcData>({
           peoplePresent: presentNames().length,
         });
         logger.debug({ respond: d.respond, kind: d.kind, reason: d.reason, channel: 'chat' }, 'route');
+        if (d.respond && desk) {
+          const r = await desk.handle(line, speakerOf(p), undefined, true).catch(() => ({ acted: false, say: '' }));
+          if (r.acted) {
+            if (r.say) await sendChat(r.say);
+            return;
+          }
+        }
         if (d.respond) await replyInChat(nameOf(p));
       } catch (err) {
         logger.debug({ err }, 'chat routing failed');
       }
     });
+
+    /** A chat message from the AI (also kept in its context and the transcript). */
+    const sendChat = async (out: string) => {
+      await ctx.room.localParticipant?.sendText(out, { topic: CHAT_TOPIC });
+      await appendToContext('assistant', `(in chat) ${out}`);
+      transcript.add({
+        speakerId: ctx.room.localParticipant?.identity ?? 'agent', speakerName: getAssistantName(), userId: null, isAgent: true,
+        channel: 'chat', text: out, language: '', at: Date.now(),
+      });
+    };
 
     const replyInChat = async (speaker: string) => {
       try {
@@ -830,6 +928,10 @@ export default defineAgent<ProcData>({
         else stopListening(rp.identity);
       })
       .on(RoomEvent.RoomMetadataChanged, (metadata) => applyRoomSettings(metadata))
+      .on(RoomEvent.DataReceived, (_payload, participant, _kind, topic) => {
+        // The server (no participant) tells us a draft changed in the panel: reload it.
+        if (topic === 'aumeet.issue' && !participant) void desk?.reload().catch(() => {});
+      })
       .on(RoomEvent.TrackUnsubscribed, (_track, pub, p) => {
         if (pub.source === TrackSource.SOURCE_MICROPHONE) stopListening(p.identity);
         if (pub.source === TrackSource.SOURCE_SCREENSHARE) stopWatching(p.identity);

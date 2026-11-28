@@ -15,6 +15,9 @@ const RecordingSchema = new Schema(
     startedAt: { type: Date, default: Date.now },
     endedAt: { type: Date },
     stopRequestedAt: { type: Date },
+    /** room = the whole meeting; screen = one shared screen recorded as evidence for a Jira draft. */
+    kind: { type: String, enum: ['room', 'screen'], default: 'room' },
+    draftId: { type: String, index: { sparse: true } },
   },
   { collection: 'recordings' },
 );

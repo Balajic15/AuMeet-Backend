@@ -13,6 +13,8 @@ import { sendFollowUps } from './memory/followup.js';
 import { purgeOldContent } from './memory/retention.js';
 import { planFollowThrough, planOverdueNudges, runDueActions } from './services/followThrough.js';
 import { hostsToLearn, learnLessons } from './services/feedback.js';
+import { IssueDraftModel } from './models/IssueDraft.js';
+import { uploadReadyAttachments } from './services/issues.js';
 import { MEMORY_QUEUE, createMemoryQueue, enqueueSession, redisConnection, type ProcessSessionJob } from './queue.js';
 import { logger } from './logger.js';
 
@@ -43,6 +45,10 @@ async function main() {
         return res;
       }
       if (job.name === 'follow-through') {
+        // Jira issues whose screen recording finished processing after creation.
+        for (const d of await IssueDraftModel.find({ status: 'created', 'evidence.attachments.status': { $in: ['pending', 'ready'] } }).select({ _id: 1 }).limit(50).lean()) {
+          await uploadReadyAttachments(String(d._id)).catch(() => {});
+        }
         const sent = await runDueActions();
         const nudged = await planOverdueNudges(ai);
         if (sent || nudged) logger.info({ sent, nudged }, 'follow-through sweep');

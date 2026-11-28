@@ -66,6 +66,8 @@ services:
     environment:
       NODE_ENV: production
       AGENT_NAME: ${PROD_AGENT_NAME:-aumeet}
+      # Jira issues and screen recordings go through the server's internal API.
+      AUMEET_API_URL: http://server:4000
     restart: unless-stopped
     # Each meeting runs in its own process; give the agent room to breathe.
     deploy:

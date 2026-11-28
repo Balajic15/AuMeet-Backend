@@ -1,4 +1,5 @@
 import {
+  DataPacket_Kind,
   AccessToken,
   AgentDispatchClient,
   RoomAgentDispatch,
@@ -197,5 +198,14 @@ export async function setRoomSettings(
     await rooms().updateRoomMetadata(roomName, JSON.stringify(settings));
   } catch (err) {
     logger.debug({ err, roomName }, 'room not running – settings apply next session');
+  }
+}
+
+/** Tell everyone in a running room (and the AI) that something changed, e.g. a Jira draft. Best effort. */
+export async function notifyRoom(roomName: string, topic: string, payload: unknown): Promise<void> {
+  try {
+    await rooms().sendData(roomName, new TextEncoder().encode(JSON.stringify(payload)), DataPacket_Kind.RELIABLE, { topic });
+  } catch (err) {
+    logger.debug({ err, roomName }, 'room not running – nothing to notify');
   }
 }

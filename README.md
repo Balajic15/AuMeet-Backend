@@ -21,6 +21,22 @@ decisions and tasks, speaks up when a decision is left unresolved, and remembers
 | **Learning** | Every correction you make (owner, deadline, status, speaker, a missed or wrong item) becomes training data. Recurring mistakes become lessons the note-taker follows, but only with enough independent evidence. Lessons are versioned, expire, and can be rolled back. |
 | **Analytics** | Participation balance, speaking time, agenda completion, time to decide, unresolved items, and task completion over time, with AI recommendations. |
 
+## AI providers, screens and Jira
+
+- **API keys and models:** every Gemini key in `GOOGLE_API_KEY`, `GEMINI_API_KEY_2`, `GEMINI_API_KEY_3` … (or
+  `GEMINI_API_KEYS=a,b,c`) is used in rotation; a rate-limited key cools down for as long as Google says and the next
+  one is used; an invalid key is set aside. Models per task with `GEMINI_MODELS_<TASK>` (`NOTES`, `COPILOT`, `BRAIN`,
+  `ROUTER`, `VOICE`, `VISION`, `JIRA`), cheap fast models by default. Usage (calls, failures, tokens, time per task,
+  model and key slot) is recorded in `ai_usage`.
+- **Shared screens:** when someone shares their screen and allows it, the AI samples a frame a second, compares tiny
+  thumbnails, and sends a frame to a vision model only when the picture settled after a meaningful change or someone
+  asks ("look at this"). Limits are AI settings. Everyone sees an indicator; the sharer can hide the screen any time.
+- **Jira from the conversation:** "Maaya, create a Jira bug for this" starts a draft filled from the talk and the
+  screen; Maaya asks only for what is missing, offers a screenshot / screen recording / file, shows a preview, and
+  creates the issue after approval (requester or host) – once, with duplicate checks. The draft and preview are in
+  the meeting panel. Needs Jira connected in Account → Follow-through → Integrations (project chosen). Screen
+  recordings need the recording bucket (`RECORDING_S3_*`).
+
 ## Architecture
 
 ```

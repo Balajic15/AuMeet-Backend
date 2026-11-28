@@ -22,8 +22,19 @@ export async function callJson<T>(url: string, init: RequestInit, label: string)
     const auth = res.status === 401 || res.status === 403;
     let detail = '';
     try {
-      const j = JSON.parse(text) as { error?: { message?: string } | string; errors?: Array<{ message?: string }>; errorMessages?: string[]; message?: string };
-      detail = (typeof j.error === 'string' ? j.error : j.error?.message) ?? j.errors?.[0]?.message ?? j.errorMessages?.[0] ?? j.message ?? '';
+      const j = JSON.parse(text) as {
+        error?: { message?: string } | string;
+        errors?: Array<{ message?: string }> | Record<string, string>;
+        errorMessages?: string[];
+        message?: string;
+      };
+      // Jira reports field problems as { errors: { field: message } }; others use arrays.
+      const errs = Array.isArray(j.errors)
+        ? j.errors[0]?.message
+        : j.errors && typeof j.errors === 'object'
+          ? Object.entries(j.errors).map(([k, v]) => `${k}: ${v}`).join('; ')
+          : undefined;
+      detail = (typeof j.error === 'string' ? j.error : j.error?.message) ?? errs ?? j.errorMessages?.[0] ?? j.message ?? '';
     } catch {
       /* not JSON */
     }

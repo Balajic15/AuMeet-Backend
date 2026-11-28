@@ -9,6 +9,8 @@ const Env = z.object({
   DEEPGRAM_API_KEY: z.string().min(1, 'DEEPGRAM_API_KEY is required'),
   // First Gemini key; more keys: GEMINI_API_KEY_2, GEMINI_API_KEY_3 … or GEMINI_API_KEYS=a,b,c (rotated, see ai/pool.ts).
   GOOGLE_API_KEY: z.string().min(1, 'GOOGLE_API_KEY is required'),
+  // Where the AuMeet server is (Jira issues and screen recordings go through its internal API).
+  AUMEET_API_URL: z.string().url().default('http://localhost:4000'),
   // Fast models first: a live conversation needs ~1 s answers. Measured Nov 2026:
   // 3.5-flash-lite ~1 s, 3-flash-preview ~1.3 s, 3.5-flash 10–100 s under load.
   GEMINI_MODEL: z.string().default('gemini-3.5-flash-lite'),

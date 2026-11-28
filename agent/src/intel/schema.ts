@@ -411,6 +411,8 @@ export interface Insights {
   copilot?: Copilot | null;
   /** What is (and was) on a shared screen the AI was allowed to see (screen/vision.ts). */
   screen?: import('../screen/vision.js').ScreenState | null;
+  /** Jira drafts and issues of this session (jira/flow.ts). */
+  issues?: import('../jira/flow.js').DraftView[];
   topics: Topic[];
   decisions: Decision[];
   actionItems: ActionItem[];

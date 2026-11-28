@@ -170,8 +170,23 @@ export interface ScreenObservation {
   issue: { suspected: boolean; description: string; actual: string; expected: string; steps: string[] };
 }
 
+/** A Jira ticket the AI prepares in the meeting (agent/src/jira/flow.ts DraftView). */
+export interface IssueDraftView {
+  id: string;
+  type: 'bug' | 'story' | 'task';
+  status: 'drafting' | 'ready' | 'creating' | 'created' | 'cancelled' | 'failed';
+  fields: Record<string, string | string[] | undefined> & { summary?: string };
+  missing: string[];
+  evidence: { decision: string; attachments: Array<{ id: string; kind: string; name: string; status: string }> };
+  requestedBy: string | null;
+  jira: { key: string; url: string } | null;
+  error: string | null;
+  duplicateOf?: { key: string; url: string; summary: string } | null;
+}
+
 export interface Insights {
   summary: string;
+  issues?: IssueDraftView[];
   /** What the AI saw on a shared screen (only with the sharer's consent). */
   screen?: { sharing: string | null; observations: ScreenObservation[] } | null;
   keyPoints?: KeyPoint[];

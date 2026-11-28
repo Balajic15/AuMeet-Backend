@@ -136,6 +136,12 @@ export class MeetingAnalyzer {
     }
   }
 
+  /** Jira drafts changed: part of the notes (and the live panel). */
+  setIssues(issues: Insights['issues']): Insights {
+    this.state = { ...this.state, issues };
+    return this.state;
+  }
+
   /** New screen observations: part of the notes everyone (and every model step) sees. */
   setScreen(screen: Insights['screen']): Insights {
     this.state = { ...this.state, screen };

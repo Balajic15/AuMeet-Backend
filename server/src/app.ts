@@ -13,6 +13,7 @@ import memoryRoutes from './routes/memory.js';
 import aiRoutes from './routes/ai.js';
 import analyticsRoutes from './routes/analytics.js';
 import integrationRoutes from './routes/integrations.js';
+import internalRoutes from './routes/internal.js';
 import livekitWebhook from './routes/livekitWebhook.js';
 import { csrfGuard } from './middleware/auth.js';
 import { auditMutations } from './services/audit.js';
@@ -51,6 +52,8 @@ export function createApp() {
 
   // Mounted before express.json(): the webhook needs the raw body for signature checks.
   app.use('/api/livekit/webhook', livekitWebhook);
+  // Agent → server (signed with the shared LiveKit secret; raw body for the signature).
+  app.use('/api/internal', limiter(600), internalRoutes);
 
   app.use(express.json({ limit: '100kb' }));
   app.use('/api', csrfGuard);

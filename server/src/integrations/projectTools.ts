@@ -246,3 +246,12 @@ export function setIssueDone(userId: string, issue: ExternalIssue, done: boolean
     await asana(secret, `/tasks/${encodeURIComponent(issue.id)}`, { method: 'PUT', body: JSON.stringify({ data: { completed: done } }) });
   });
 }
+
+/** For the conversational Jira workflow (integrations/jiraIssues.ts): same credentials and request helper. */
+export async function jiraConnection(userId: string): Promise<{ secret: JiraSecret; config: Record<string, string> } | null> {
+  const doc = await IntegrationModel.findOne({ userId, provider: 'jira', status: 'connected' }).select('+secret');
+  if (!doc) return null;
+  return { secret: decryptSecret<JiraSecret>(doc.secret), config: (doc.config ?? {}) as Record<string, string> };
+}
+export { jira as jiraRequest };
+export type { JiraSecret };

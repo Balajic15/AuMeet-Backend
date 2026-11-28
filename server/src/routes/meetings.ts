@@ -20,6 +20,7 @@ import {
   dispatchAgent,
   ensureAgent,
   muteParticipant,
+  notifyRoom,
   removeAgents,
   removeParticipant,
   setRoomSettings,
@@ -35,6 +36,8 @@ import { env } from '../config/env.js';
 import { BehaviourOverride, Behaviour, defaultBehaviour, mergeLayers, resolve } from '../services/aiBehaviour.js';
 import { recordCorrections, type CorrectionKind } from '../services/feedback.js';
 import { canSeeSession, presentDuring } from '../memory/access.js';
+import { IssueAttachmentModel, IssueDraftModel, MAX_ATTACHMENT_BYTES } from '../models/IssueDraft.js';
+import { createIssueFromDraft, IssueFlowError, publicDraft, uploadReadyAttachments, type DraftDoc } from '../services/issues.js';
 import { audit, auditForMeeting } from '../services/audit.js';
 import { FollowActionModel, type FollowAction } from '../models/FollowAction.js';
 import { executeAction, planFollowThrough, publicAction, reportTaskProgress, retryAction } from '../services/followThrough.js';
@@ -697,6 +700,87 @@ router.post('/:code/insights/:sessionId/actions/:actionId/retry', requireAuth, a
   await executeAction(String(req.params.actionId));
   const fresh = await FollowActionModel.findById(String(req.params.actionId)).lean();
   res.json({ action: publicAction(fresh as FollowAction) });
+});
+
+// ---------- Jira drafts the AI prepared in the meeting ----------
+
+async function draftFor(req: Request) {
+  const meeting = await findByCode(req.params.code as string);
+  const id = String(req.params.id);
+  const d = /^[a-f0-9]{24}$/.test(id) ? ((await IssueDraftModel.findOne({ _id: id, meetingCode: meeting.code }).lean()) as DraftDoc | null) : null;
+  if (!d) throw notFound('Draft not found');
+  // Same rule as the notes: people who were in that session (or the host).
+  await visibleSession(req, meeting, d.sessionId);
+  return { meeting, d };
+}
+
+router.get('/:code/issues', requireAuth, async (req, res) => {
+  const meeting = await findByCode(req.params.code as string);
+  await assertCanSeeInsights(req, meeting);
+  const drafts = (await IssueDraftModel.find({ meetingCode: meeting.code }).sort({ createdAt: -1 }).limit(50).lean()) as DraftDoc[];
+  const sessions = await MeetingInsightModel.find({ sessionId: { $in: [...new Set(drafts.map((d) => d.sessionId))] } }).lean();
+  const visible = new Set(sessions.filter((s) => canSeeSession(req.auth!.sub, meeting, s)).map((s) => s.sessionId));
+  res.json({ drafts: drafts.filter((d) => visible.has(d.sessionId) || meeting.host.toString() === req.auth!.sub).map(publicDraft) });
+});
+
+router.post('/:code/issues/:id/create', requireAuth, async (req, res) => {
+  const { meeting, d } = await draftFor(req);
+  const { allowDuplicate } = z.object({ allowDuplicate: z.boolean().optional() }).parse(req.body ?? {});
+  try {
+    const out = await createIssueFromDraft(String(d._id), { userId: req.auth!.sub, identity: `user:${req.auth!.sub}` }, { allowDuplicate, meetingLink: `${meetingLinkFor(meeting.code)}/insights` });
+    void notifyRoom(meeting.code, 'aumeet.issue', { draftId: String(d._id) });
+    res.json(out);
+  } catch (err) {
+    if (err instanceof IssueFlowError) {
+      res.status(err.status).json({ message: err.message, details: err.details ?? null });
+      return;
+    }
+    throw err;
+  }
+});
+
+router.post('/:code/issues/:id/cancel', requireAuth, async (req, res) => {
+  const { meeting, d } = await draftFor(req);
+  const isHost = meeting.host.toString() === req.auth!.sub;
+  if (!isHost && d.requestedBy?.userId !== req.auth!.sub) throw forbidden('Only the person who asked for it or the host can cancel it');
+  if (d.status === 'created') throw conflict('This issue was already created in Jira');
+  await IssueDraftModel.updateOne({ _id: d._id }, { $set: { status: 'cancelled' } });
+  void notifyRoom(meeting.code, 'aumeet.issue', { draftId: String(d._id) });
+  res.json({ ok: true });
+});
+
+const evidenceUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_ATTACHMENT_BYTES, files: 1 } });
+
+// Attach a file (screenshot, log, document) to a draft – choosing the file is the confirmation.
+router.post('/:code/issues/:id/attachments', requireAuth, evidenceUpload.single('file'), async (req, res) => {
+  const { meeting, d } = await draftFor(req);
+  if (d.status === 'cancelled') throw conflict('This draft was cancelled');
+  const file = req.file;
+  if (!file) throw badRequest('Choose a file');
+  if ((d.evidence?.attachments ?? []).length >= 10) throw badRequest('At most 10 attachments per issue');
+  const id = randomBytes(12).toString('hex');
+  const name = file.originalname.replace(/[\\/\r\n"]/g, '_').slice(0, 120) || 'attachment';
+  await IssueAttachmentModel.create({ _id: id, draftId: String(d._id), meetingCode: meeting.code, name, mime: file.mimetype || 'application/octet-stream', size: file.size, data: file.buffer });
+  await IssueDraftModel.updateOne(
+    { _id: d._id },
+    { $push: { 'evidence.attachments': { id, kind: 'file', name, mime: file.mimetype || 'application/octet-stream', size: file.size, status: 'ready', addedBy: req.auth!.sub } }, $set: { 'evidence.decision': 'collected' } },
+  );
+  // Already in Jira: attach right away.
+  if (d.status === 'created') void uploadReadyAttachments(String(d._id));
+  void notifyRoom(meeting.code, 'aumeet.issue', { draftId: String(d._id) });
+  res.status(201).json({ id, name });
+});
+
+// Preview of an attachment (images in the ticket preview).
+router.get('/:code/issues/:id/attachments/:aid', requireAuth, async (req, res) => {
+  const { d } = await draftFor(req);
+  const a = await IssueAttachmentModel.findOne({ _id: String(req.params.aid), draftId: String(d._id) }).lean();
+  if (!a?.data) throw notFound('Attachment not found');
+  const raw = a.data as unknown as { buffer?: Uint8Array } | Uint8Array;
+  res.setHeader('Content-Type', /^image\/(png|jpeg|gif|webp)$/.test(a.mime ?? '') ? a.mime! : 'application/octet-stream');
+  res.setHeader('Content-Disposition', `${/^image\//.test(a.mime ?? '') ? 'inline' : 'attachment'}; filename="${(a.name ?? 'file').replace(/"/g, '')}"`);
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.send(Buffer.from(raw instanceof Uint8Array ? raw : (raw.buffer ?? new Uint8Array())));
 });
 
 const MissedTask = z.object({

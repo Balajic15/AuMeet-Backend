@@ -17,6 +17,7 @@ import { ToastService } from '../shared/toast';
 import { RoomService, type ParticipantView } from './room.service';
 import type { Meeting, MeetingSettings } from '../core/meetings.service';
 import { InsightsView } from '../shared/insights-view';
+import { IssueDrafts } from './issue-drafts';
 import { isEmptyInsights } from '../core/insights';
 
 export type PanelTab = 'chat' | 'people' | 'insights';
@@ -24,7 +25,7 @@ export type PanelTab = 'chat' | 'people' | 'insights';
 @Component({
   selector: 'app-side-panel',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [Icon, FormsModule, InsightsView],
+  imports: [Icon, FormsModule, InsightsView, IssueDrafts],
   template: `
     <header>
       <div class="tabs" role="tablist">
@@ -44,6 +45,7 @@ export type PanelTab = 'chat' | 'people' | 'insights';
     @if (tab() === 'insights') {
       <div class="insights">
         @if (room.insights(); as ins) {
+          @if (ins.issues?.length && meeting()) { <app-issue-drafts [code]="meeting()!.code" [drafts]="ins.issues!" /> }
           @if (isEmpty(ins)) {
             <p class="hint">Nothing noted yet. Decisions, tasks and open questions appear here as the meeting goes.</p>
           } @else {
