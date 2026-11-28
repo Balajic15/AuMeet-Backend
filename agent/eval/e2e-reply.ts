@@ -39,6 +39,9 @@ r.registerTextStreamHandler('lk.chat', async (reader, from) => {
   console.log(`[${secs()}s] chat from ${from.identity}: ${text}`);
   replies.push(text);
 });
+r.on(RoomEvent.ParticipantNameChanged, (p, name) => {
+  if (p.kind === ParticipantKind.AGENT) console.log(`[${secs()}s] agent is now called "${name}"`);
+});
 r.on(RoomEvent.ParticipantConnected, (p) => {
   if (p.kind === ParticipantKind.AGENT) {
     agentAt = Date.now();
