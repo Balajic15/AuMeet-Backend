@@ -171,6 +171,7 @@ export class MeetingAnalyzer {
       );
       this.state = normalize(this.state, out, {
         validLines: new Set(all.map((u) => u.id)),
+        lineInfo: new Map(all.map((u) => [u.id, { at: u.at, speaker: u.speakerName }])),
         people: this.opts.people(),
         analyzedThrough: through,
         now: new Date(this.now()),

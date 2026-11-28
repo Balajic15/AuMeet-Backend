@@ -133,4 +133,30 @@ describe('InsightsView – goal and agenda', () => {
     expect(page.querySelector('.copilot')).toBeNull();
     expect(page.querySelector('.risk')).not.toBeNull();
   });
+
+  it('shows finality, changes, who/when/confidence, tentative tasks, answers and corrections', async () => {
+    const at = '2026-11-26T10:05:00Z';
+    const rich: Insights = {
+      ...notes,
+      decisions: [{
+        id: 'd9', topic: 'Launch', statement: 'Launch Monday if legal signs off', status: 'agreed', options: [], proposedBy: [], supporters: [], objectors: [],
+        confirmationNeeded: null, evidence: [], finality: 'conditional', condition: 'legal signs off', reversed: true,
+        history: [{ at, status: 'agreed', statement: 'Launch Monday', finality: 'final' }], confidence: 0.82,
+        trace: { firstAt: at, lastAt: at, speakers: ['Asha', 'Ben'] },
+      }],
+      actionItems: [{ id: 't1', task: 'Look at pricing', owner: 'Ben', ownerUserId: null, deadline: null, dueDate: null, status: 'open', commitment: 'tentative', evidence: [] }],
+      openQuestions: [{ id: 'q1', question: 'Who owns QA?', askedBy: null, status: 'answered', answer: 'Chen', evidence: [] }],
+      statementChanges: [{ id: 'c1', person: 'Asha', kind: 'corrected', topic: 'users', before: '200', after: '20', evidence: [] }],
+    };
+    const el = (await render({ insights: rich })).nativeElement as HTMLElement;
+    const text = el.textContent ?? '';
+    expect(text).toContain('Conditional');
+    expect(text).toContain('Only if legal signs off');
+    expect(text).toContain('Changed in meeting');
+    expect(text).toContain('82% sure');
+    expect(text).toContain('Asha, Ben');
+    expect(text).toContain('tentative');
+    expect(text).toContain('→ Chen');
+    expect(text).toContain('corrected on users');
+  });
 });

@@ -12,11 +12,13 @@ export function renderNotes(i: Insights): string {
     for (const a of i.agenda) lines.push(`- ${a.title}: ${a.status.replace('_', ' ')}${a.note ? ` (${a.note})` : ''}`);
   }
 
-  const decisions = i.decisions.filter((d) => d.status !== 'rejected');
+  const decisions = i.decisions.filter((d) => d.status !== 'rejected' && d.status !== 'superseded');
   if (decisions.length) {
     lines.push('Decisions:');
     for (const d of decisions) {
-      let s = `- [${d.status.toUpperCase()}] ${d.statement}`;
+      let s = `- [${d.status.toUpperCase()}${d.finality && d.finality !== 'final' ? `, ${d.finality.toUpperCase()}` : ''}] ${d.statement}`;
+      if (d.condition) s += ` (only if ${d.condition})`;
+      if (d.reversed) s += ' – changed during this meeting';
       if (d.status === 'disputed' && d.options.length) s += ` (options: ${names(d.options)})`;
       if (d.supporters.length) s += `; supported by ${names(d.supporters)}`;
       if (d.objectors.length) s += `; objections from ${names(d.objectors)}`;
@@ -29,7 +31,7 @@ export function renderNotes(i: Insights): string {
   if (open.length) {
     lines.push('Open tasks:');
     for (const a of open) {
-      lines.push(`- ${a.task} — ${a.owner ?? 'no owner yet'}${a.deadline ? `, ${a.deadline}` : ''}`);
+      lines.push(`- ${a.task} — ${a.owner ?? 'no owner yet'}${a.deadline ? `, ${a.deadline}` : ''}${a.commitment === 'tentative' ? ' (tentative)' : ''}`);
     }
   }
 
@@ -37,6 +39,12 @@ export function renderNotes(i: Insights): string {
   if (qs.length) {
     lines.push('Unanswered questions:');
     for (const q of qs) lines.push(`- ${q.question}${q.askedBy ? ` (asked by ${q.askedBy})` : ''}`);
+  }
+
+  const changes = i.statementChanges ?? [];
+  if (changes.length) {
+    lines.push('Changed positions and corrections:');
+    for (const c of changes) lines.push(`- ${c.person} ${c.kind === 'corrected' ? 'corrected' : 'changed position on'} ${c.topic || 'a point'}: "${c.before}" → "${c.after}"`);
   }
 
   const risks = (i.risks ?? []).filter((r) => r.status === 'open');

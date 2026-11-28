@@ -7,10 +7,11 @@ const STATUS_LABEL: Record<DecisionStatus, string> = {
   proposed: 'Suggested',
   agreed: 'Confirmed',
   rejected: 'Dropped',
+  superseded: 'Replaced',
 };
 
 /** Order: things the team must act on first. */
-const STATUS_ORDER: DecisionStatus[] = ['disputed', 'proposed', 'agreed', 'rejected'];
+const STATUS_ORDER: DecisionStatus[] = ['disputed', 'proposed', 'agreed', 'rejected', 'superseded'];
 
 /**
  * Renders AI meeting notes. Used live in the room's side panel (compact) and on the
@@ -121,7 +122,9 @@ const STATUS_ORDER: DecisionStatus[] = ['disputed', 'proposed', 'agreed', 'rejec
       <section class="block">
         <h3>Key points</h3>
         <ul class="points">
-          @for (k of keyPoints(); track k.id) { <li [class.high]="k.importance === 'high'">{{ k.point }}</li> }
+          @for (k of keyPoints(); track k.id) {
+            <li [class.high]="k.importance === 'high'">@if (k.kind && k.kind !== 'fact') { <span class="tag">{{ k.kind }}</span> }{{ k.point }}</li>
+          }
         </ul>
       </section>
     }
@@ -135,6 +138,8 @@ const STATUS_ORDER: DecisionStatus[] = ['disputed', 'proposed', 'agreed', 'rejec
         <article class="card" [class]="'card st-' + d.status">
           <div class="card-head">
             <span class="chip" [class]="'chip st-' + d.status">{{ label(d.status) }}</span>
+            @if (d.finality && d.finality !== 'final') { <span class="chip fin">{{ d.finality === 'conditional' ? 'Conditional' : 'Tentative' }}</span> }
+            @if (d.reversed) { <span class="chip rev">Changed in meeting</span> }
             @if (d.topic) { <span class="topic">{{ d.topic }}</span> }
             @if (editable()) {
               <span class="edit-actions">
@@ -149,6 +154,16 @@ const STATUS_ORDER: DecisionStatus[] = ['disputed', 'proposed', 'agreed', 'rejec
             }
           </div>
           <p class="statement">{{ d.statement }}</p>
+          @if (d.condition) { <p class="cond">Only if {{ d.condition }}</p> }
+          @if (d.history?.length) {
+            <button type="button" class="src-btn" (click)="toggle('h-' + d.id)">{{ open() === 'h-' + d.id ? 'Hide' : 'Show' }} how it changed ({{ d.history!.length }})</button>
+            @if (open() === 'h-' + d.id) {
+              <ol class="hist">
+                @for (h of d.history; track $index) { <li><span class="when">{{ clock(h.at) }}</span> {{ label(h.status) }}: {{ h.statement }}</li> }
+                <li><span class="when">now</span> {{ label(d.status) }}: {{ d.statement }}</li>
+              </ol>
+            }
+          }
           @if (d.status === 'disputed' && d.options.length) {
             <div class="options">
               @for (o of d.options; track o) { <span class="opt">{{ o }}</span> }
@@ -161,6 +176,7 @@ const STATUS_ORDER: DecisionStatus[] = ['disputed', 'proposed', 'agreed', 'rejec
             <p class="ask"><app-icon name="sparkles" [size]="14" /> {{ d.confirmationNeeded }}</p>
           }
           <p class="who">{{ people(d) }}</p>
+          @if (meta(d); as m) { <p class="meta-line">{{ m }}</p> }
           @if (sourcesFor(d.evidence).length) {
             <button type="button" class="src-btn" (click)="toggle(d.id)">
               {{ open() === d.id ? 'Hide' : 'Show' }} sources ({{ sourcesFor(d.evidence).length }})
@@ -204,7 +220,7 @@ const STATUS_ORDER: DecisionStatus[] = ['disputed', 'proposed', 'agreed', 'rejec
                 @if (a.status === 'done') { <app-icon name="check" [size]="14" /> }
               </span>
               <div class="task-body">
-                <div class="task">{{ a.task }}</div>
+                <div class="task">{{ a.task }}@if (a.commitment === 'tentative') { <span class="tag">tentative</span> }</div>
                 @if (editable()) {
                   <span class="edit-actions task-actions">
                     <button type="button" class="icon-btn" title="Edit" aria-label="Edit task" (click)="editTask.emit(a)">
@@ -222,6 +238,7 @@ const STATUS_ORDER: DecisionStatus[] = ['disputed', 'proposed', 'agreed', 'rejec
                     <span class="sep">·</span>
                     <span><app-icon name="calendar" [size]="12" /> {{ due(a.dueDate, a.deadline) }}</span>
                   }
+                  @if (meta(a); as m) { <span class="sep">·</span> <span class="meta-line inline">{{ m }}</span> }
                 </div>
               </div>
             </li>
@@ -243,6 +260,30 @@ const STATUS_ORDER: DecisionStatus[] = ['disputed', 'proposed', 'agreed', 'rejec
                   <app-icon name="trash" [size]="14" />
                 </button>
               }
+            </li>
+          }
+        </ul>
+      </section>
+    }
+
+    @if (answered().length) {
+      <section class="block">
+        <h3>Answered <span class="n">{{ answered().length }}</span></h3>
+        <ul class="questions">
+          @for (q of answered(); track q.id) { <li>{{ q.question }}@if (q.answer) { <span class="asked"> → {{ q.answer }}</span> }</li> }
+        </ul>
+      </section>
+    }
+
+    @if (i.statementChanges?.length) {
+      <section class="block">
+        <h3>Changed positions &amp; corrections <span class="n">{{ i.statementChanges!.length }}</span></h3>
+        <ul class="questions">
+          @for (c of i.statementChanges; track c.id) {
+            <li>
+              <strong>{{ c.person }}</strong> {{ c.kind === 'corrected' ? 'corrected' : 'changed position' }}@if (c.topic) { on {{ c.topic }}}:
+              <span class="was">{{ c.before }}</span> → {{ c.after }}
+              @if (meta(c); as m) { <span class="asked"> · {{ m }}</span> }
             </li>
           }
         </ul>
@@ -358,7 +399,16 @@ const STATUS_ORDER: DecisionStatus[] = ['disputed', 'proposed', 'agreed', 'rejec
     .sev-high .risk-chip { color: var(--danger); }
     .points { margin: 0; padding-left: 18px; font-size: 14.5px; line-height: 1.5; li { margin: 4px 0; } li.high { font-weight: 500; } li.struck { text-decoration: line-through; color: var(--text-muted); } }
     .note { margin: -6px 0 8px; color: var(--text-muted); font-size: 13px; }
-    .tag { margin-left: 6px; padding: 0 6px; border: 1px solid var(--border); font-size: 11.5px; color: var(--text-muted); }
+    .tag { margin: 0 6px; padding: 0 6px; border: 1px solid var(--border); font-size: 11.5px; color: var(--text-muted); font-weight: 400; }
+    .chip.fin { color: #c9a7ff; }
+    .chip.rev { color: #ffb020; }
+    .chip.st-superseded { color: var(--text-muted); }
+    .card.st-superseded { opacity: 0.55; }
+    .cond { margin: 6px 0 0; color: #c9a7ff; font-size: 13.5px; }
+    .hist { margin: 6px 0 0; padding-left: 18px; font-size: 13px; color: #cfcfcf; li { margin: 3px 0; } .when { color: var(--text-muted); margin-right: 6px; font-variant-numeric: tabular-nums; } }
+    .meta-line { margin: 6px 0 0; color: var(--text-placeholder); font-size: 12px; }
+    .meta-line.inline { margin: 0; }
+    .was { text-decoration: line-through; color: var(--text-muted); }
   `,
 })
 export class InsightsView {
@@ -385,6 +435,25 @@ export class InsightsView {
     return (this.insights().risks ?? []).filter((r) => r.status === 'open').sort((a, b) => rank[a.severity] - rank[b.severity]);
   });
   protected readonly assumptions = computed(() => this.insights().assumptions ?? []);
+  protected readonly answered = computed(() => this.insights().openQuestions.filter((q) => q.status === 'answered'));
+
+  protected clock(iso: string | null | undefined): string {
+    return iso ? new Date(iso).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) : '';
+  }
+
+  /** "Asha, Ben · 10:41–10:48 · 85% sure" – who said it, when, and how sure the AI is. */
+  protected meta(x: { trace?: { firstAt: string | null; lastAt: string | null; speakers: string[] } | null; confidence?: number | null }): string {
+    const parts: string[] = [];
+    const t = x.trace;
+    if (t?.speakers.length) parts.push(t.speakers.join(', '));
+    if (t?.firstAt) {
+      const a = this.clock(t.firstAt);
+      const b = this.clock(t.lastAt);
+      parts.push(b && b !== a ? `${a}–${b}` : a);
+    }
+    if (typeof x.confidence === 'number') parts.push(`${Math.round(x.confidence * 100)}% sure`);
+    return parts.join(' · ');
+  }
   protected readonly keyPoints = computed(() =>
     [...(this.insights().keyPoints ?? [])].sort((a, b) => Number(b.importance === 'high') - Number(a.importance === 'high')),
   );

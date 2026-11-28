@@ -42,6 +42,29 @@ Contradictions: if EARLIER AGREED DECISIONS are listed, set "contradicts" on a d
 of an earlier decision it reverses, replaces or conflicts with (e.g. earlier "Use PostgreSQL for billing",
 now "Move billing to MongoDB"). Revisiting or confirming the same choice is NOT a contradiction. Otherwise "".
 
+Understanding the conversation – read it as a whole, not line by line:
+- Read consecutive statements together: a reply can accept, qualify, answer or contradict what came just before
+  ("yes, but only for Europe", "no wait, that was Q2"). Use that to decide what was really agreed.
+- Brainstorming is not commitment. Ideas floated ("we could…", "what if…", "maybe one option is…") are keyPoints
+  with kind "idea" or proposed decisions – never action items. An action item needs someone taking it on;
+  commitment "firm" when they clearly commit ("I'll send it by Friday"), "tentative" when hedged ("I can
+  probably look at it", "I'll try").
+- Decision finality: "final" when settled without conditions; "conditional" when it only holds if something
+  happens ("if legal signs off, we launch Monday" → condition "legal signs off"); "tentative" when the group
+  leans towards it but hasn't committed ("let's probably go with X, we'll confirm Thursday").
+- Update, don't duplicate: when a decision on the same question changes (new option, reversed, made conditional,
+  confirmed), return it again with its EXISTING id and the new statement/status/finality. Set reversed to true
+  when something agreed earlier in this meeting is overturned. If you notice you created a separate item for the
+  same question, set revises on the new one to the earlier id.
+- statementChanges: record when a person changes their position ("actually I now think we should wait") or
+  corrects something they said ("sorry, I meant 20 users, not 200"), with before and after. The corrected value
+  is what counts everywhere else in the notes.
+- keyPoints kind: "fact" for verifiable information and numbers, "opinion" for someone's view or preference,
+  "idea" for possibilities nobody committed to.
+- Questions: mark answered only when someone actually answered it, and give the answer in a few words.
+- confidence on every item: 0–1, how sure you are it is right given the transcript – explicit, unambiguous
+  statements high (0.85+); inferred, hedged or noisy ones lower. Lower it when speech-to-text looks garbled.
+
 Confirmed vs suggested vs assumed – keep these apart:
 - A decision is "agreed" only when explicitly settled; a suggestion nobody settled stays "proposed".
 - assumptions: things people treat as true without anyone checking ("assuming the API is ready",
@@ -113,7 +136,7 @@ export function analystPrompt(opts: {
   const notes = {
     summary: current.summary,
     topics: current.topics.map(({ id, title, status }) => ({ id, title, status })),
-    decisions: current.decisions.map((d) => ({
+    decisions: current.decisions.filter((d) => d.status !== 'superseded').map((d) => ({
       id: d.id,
       topic: d.topic,
       statement: d.statement,
@@ -124,6 +147,10 @@ export function analystPrompt(opts: {
       objectors: d.objectors,
       confirmationNeeded: d.confirmationNeeded ?? '',
       contradicts: d.contradicts?.ref ?? '',
+      finality: d.finality ?? 'final',
+      condition: d.condition ?? '',
+      reversed: !!d.reversed,
+      confidence: d.confidence ?? null,
       evidence: d.evidence,
     })),
     actionItems: current.actionItems.map((a) => ({
@@ -133,6 +160,8 @@ export function analystPrompt(opts: {
       deadline: a.deadline ?? '',
       dueDate: a.dueDate ?? '',
       status: a.status,
+      commitment: a.commitment ?? 'firm',
+      confidence: a.confidence ?? null,
       evidence: a.evidence,
     })),
     openQuestions: current.openQuestions.map((q) => ({
@@ -140,9 +169,13 @@ export function analystPrompt(opts: {
       question: q.question,
       askedBy: q.askedBy ?? '',
       status: q.status,
+      answer: q.answer ?? '',
       evidence: q.evidence,
     })),
-    keyPoints: (current.keyPoints ?? []).map(({ id, point, importance, evidence }) => ({ id, point, importance, evidence })),
+    statementChanges: (current.statementChanges ?? []).map((c) => ({
+      id: c.id, person: c.person, kind: c.kind, topic: c.topic, before: c.before, after: c.after, relatedItems: c.relatedItems, evidence: c.evidence,
+    })),
+    keyPoints: (current.keyPoints ?? []).map(({ id, point, importance, kind, evidence }) => ({ id, point, importance, kind: kind ?? 'fact', evidence })),
     assumptions: (current.assumptions ?? []).map((a) => ({ id: a.id, statement: a.statement, madeBy: a.madeBy ?? '', status: a.status, evidence: a.evidence })),
     risks: (current.risks ?? []).map((r) => ({
       id: r.id,

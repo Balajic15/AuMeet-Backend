@@ -5,7 +5,14 @@ import type { Meeting } from './meetings.service';
 
 /* Mirrors agent/src/intel/schema.ts (Insights). */
 
-export type DecisionStatus = 'proposed' | 'agreed' | 'disputed' | 'rejected';
+export type DecisionStatus = 'proposed' | 'agreed' | 'disputed' | 'rejected' | 'superseded';
+
+/** When it was said and by whom. */
+export interface Trace {
+  firstAt: string | null;
+  lastAt: string | null;
+  speakers: string[];
+}
 
 export interface Decision {
   id: string;
@@ -20,6 +27,13 @@ export interface Decision {
   /** An earlier meeting's agreed decision that this one goes against. */
   contradicts?: { ref: string; statement: string; date: string; title: string } | null;
   evidence: number[];
+  finality?: 'final' | 'conditional' | 'tentative';
+  condition?: string | null;
+  reversed?: boolean;
+  history?: Array<{ at: string; status: DecisionStatus; statement: string; finality: string }>;
+  supersededBy?: string | null;
+  confidence?: number | null;
+  trace?: Trace;
 }
 
 export interface ActionItem {
@@ -30,7 +44,10 @@ export interface ActionItem {
   deadline: string | null;
   dueDate: string | null;
   status: 'open' | 'done';
+  commitment?: 'firm' | 'tentative';
   evidence: number[];
+  confidence?: number | null;
+  trace?: Trace;
 }
 
 export interface OpenQuestion {
@@ -38,7 +55,22 @@ export interface OpenQuestion {
   question: string;
   askedBy: string | null;
   status: 'open' | 'answered';
+  answer?: string | null;
   evidence: number[];
+  confidence?: number | null;
+  trace?: Trace;
+}
+
+export interface StatementChange {
+  id: string;
+  person: string;
+  kind: 'changed_position' | 'corrected';
+  topic: string;
+  before: string;
+  after: string;
+  evidence: number[];
+  confidence?: number | null;
+  trace?: Trace;
 }
 
 export interface Topic {
@@ -71,7 +103,10 @@ export interface KeyPoint {
   id: string;
   point: string;
   importance: 'high' | 'normal';
+  kind?: 'fact' | 'opinion' | 'idea';
   evidence: number[];
+  confidence?: number | null;
+  trace?: Trace;
 }
 
 export interface Assumption {
@@ -112,6 +147,7 @@ export interface Copilot {
 export interface Insights {
   summary: string;
   keyPoints?: KeyPoint[];
+  statementChanges?: StatementChange[];
   assumptions?: Assumption[];
   risks?: Risk[];
   copilot?: Copilot | null;

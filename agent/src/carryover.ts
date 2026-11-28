@@ -132,7 +132,7 @@ export async function commitmentsLedger(db: Db, meetingCodes: string[], currentS
   for (const r of rows) {
     const items: string[] = [];
     for (const d of r.insights?.decisions ?? []) {
-      if (d.status !== 'rejected') items.push(`  decision [${d.status}]: ${d.statement}${d.options?.length && d.status !== 'agreed' ? ` (options: ${d.options.join(' vs ')})` : ''}`);
+      if (d.status !== 'rejected' && d.status !== 'superseded') items.push(`  decision [${d.status}]: ${d.statement}${d.options?.length && d.status !== 'agreed' ? ` (options: ${d.options.join(' vs ')})` : ''}`);
     }
     for (const a of r.insights?.actionItems ?? []) {
       const late = a.status === 'open' && a.dueDate && a.dueDate < today ? ' OVERDUE' : '';

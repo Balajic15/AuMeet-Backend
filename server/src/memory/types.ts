@@ -4,7 +4,11 @@ export interface StoredDecision {
   id: string;
   topic?: string;
   statement: string;
-  status: 'proposed' | 'agreed' | 'disputed' | 'rejected';
+  status: 'proposed' | 'agreed' | 'disputed' | 'rejected' | 'superseded';
+  finality?: 'final' | 'conditional' | 'tentative';
+  condition?: string | null;
+  reversed?: boolean;
+  confidence?: number | null;
   options?: string[];
   proposedBy?: string[];
   supporters?: string[];

@@ -35,7 +35,7 @@ export interface SessionMetrics {
   balance: number | null;
   agenda: { total: number; done: number; skipped: number; completion: number | null };
   goal: string | null;
-  decisions: { total: number; agreed: number; open: number; avgMinutesToDecide: number | null };
+  decisions: { total: number; agreed: number; open: number; reversed: number; avgMinutesToDecide: number | null };
   tasks: { total: number; done: number; open: number; overdue: number; unowned: number; completion: number | null };
   unresolved: number;
   risks: number;
@@ -110,7 +110,8 @@ export function computeSessionMetrics(s: SessionDoc & { endedAt?: Date }, rows: 
     },
     goal: s.recap?.goalOutcome?.status ?? null,
     decisions: {
-      total: decisions.filter((d) => d.status !== 'rejected').length,
+      total: decisions.filter((d) => d.status !== 'rejected' && d.status !== 'superseded').length,
+      reversed: decisions.filter((d) => d.reversed).length,
       agreed: decisions.filter((d) => d.status === 'agreed').length,
       open: openDecisions,
       avgMinutesToDecide: decideTimes.length ? round(avg(decideTimes)!) : null,

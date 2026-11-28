@@ -38,6 +38,14 @@ export const ModelOutput = z.object({
       contradicts: Str.describe(
         'Id of an EARLIER AGREED DECISION (e.g. "P2") that this decision reverses, replaces or conflicts with; otherwise ""',
       ),
+      finality: z
+        .enum(['final', 'conditional', 'tentative'])
+        .describe('final = settled without conditions; conditional = only holds if something happens; tentative = leaning towards, not committed')
+        .optional(),
+      condition: Str.describe('For a conditional decision, the condition, e.g. "if legal approves by Friday"; otherwise ""').optional(),
+      reversed: z.boolean().describe('true when this meeting overturned what had been agreed earlier in the meeting').optional(),
+      revises: Str.describe('If you accidentally created this as a new item but it updates an existing decision of THIS meeting, that decision\'s id; otherwise ""').optional(),
+      confidence: z.number().describe('0–1: how sure you are this item is right given the transcript (explicit statements high, inferred lower)').optional(),
       evidence: Evidence,
     }),
   ),
@@ -49,6 +57,11 @@ export const ModelOutput = z.object({
       deadline: Str.describe('Deadline as said, e.g. "by Friday", or ""'),
       dueDate: Str.describe('Deadline resolved to YYYY-MM-DD using the meeting date, or "" if unclear'),
       status: z.enum(['open', 'done']),
+      commitment: z
+        .enum(['firm', 'tentative'])
+        .describe('firm = someone clearly committed ("I\'ll send it by Friday"); tentative = hedged ("I can probably look at it")')
+        .optional(),
+      confidence: z.number().describe('0–1: how sure you are this item is right given the transcript (explicit statements high, inferred lower)').optional(),
       evidence: Evidence,
     }),
   ),
@@ -58,15 +71,34 @@ export const ModelOutput = z.object({
       question: Str,
       askedBy: Str.describe('Name, or ""'),
       status: z.enum(['open', 'answered']),
+      answer: Str.describe('When answered: the answer in a few words; otherwise ""').optional(),
+      confidence: z.number().describe('0–1: how sure you are this item is right given the transcript (explicit statements high, inferred lower)').optional(),
       evidence: Evidence,
     }),
   ),
+  statementChanges: z
+    .array(
+      z.object({
+        id: Str.describe('Existing id to keep, or "" for a new one'),
+        person: Str.describe('Who changed or corrected what they said'),
+        kind: z.enum(['changed_position', 'corrected']).describe('changed_position = changed their mind; corrected = fixed a fact or number they had said'),
+        topic: Str,
+        before: Str.describe('What they said or held before'),
+        after: Str.describe('What they say or hold now'),
+        relatedItems: z.array(Str).describe('Ids of decisions/tasks this affects'),
+        confidence: z.number().describe('0–1: how sure you are this item is right given the transcript (explicit statements high, inferred lower)').optional(),
+        evidence: Evidence,
+      }),
+    )
+    .optional(),
   keyPoints: z
     .array(
       z.object({
         id: Str.describe('Existing id to keep, or "" for a new point'),
         point: Str.describe('An important piece of information, insight or concern raised (not a decision or task)'),
         importance: z.enum(['high', 'normal']),
+        kind: z.enum(['fact', 'opinion', 'idea']).describe('fact = verifiable information or numbers; opinion = someone\'s view; idea = a brainstormed possibility nobody committed to').optional(),
+        confidence: z.number().describe('0–1: how sure you are this item is right given the transcript (explicit statements high, inferred lower)').optional(),
         evidence: Evidence,
       }),
     )
@@ -78,6 +110,7 @@ export const ModelOutput = z.object({
         statement: Str.describe('Something the group is treating as true without having confirmed it'),
         madeBy: Str.describe('Name, or ""'),
         status: z.enum(['unverified', 'confirmed', 'invalidated']),
+        confidence: z.number().describe('0–1: how sure you are this item is right given the transcript (explicit statements high, inferred lower)').optional(),
         evidence: Evidence,
       }),
     )
@@ -94,6 +127,7 @@ export const ModelOutput = z.object({
         severity: z.enum(['low', 'medium', 'high']),
         suggestedQuestion: Str.describe('A short clarifying question that would resolve it, or ""'),
         status: z.enum(['open', 'resolved']),
+        confidence: z.number().describe('0–1: how sure you are this item is right given the transcript (explicit statements high, inferred lower)').optional(),
         evidence: Evidence,
       }),
     )
@@ -149,7 +183,25 @@ export interface GoalProgress {
   since: string;
 }
 
-export type DecisionStatus = ModelOutput['decisions'][number]['status'];
+/** "superseded" is set by the normaliser when a later item replaced this one. */
+export type DecisionStatus = ModelOutput['decisions'][number]['status'] | 'superseded';
+
+/** Where an item comes from: when it was said and by whom (derived from its evidence lines). */
+export interface Trace {
+  /** ISO time of the first and last supporting line. */
+  firstAt: string | null;
+  lastAt: string | null;
+  speakers: string[];
+}
+
+export interface DecisionChange {
+  at: string;
+  status: DecisionStatus;
+  statement: string;
+  finality: Finality;
+}
+
+export type Finality = 'final' | 'conditional' | 'tentative';
 
 export interface Topic {
   id: string;
@@ -174,6 +226,16 @@ export interface Decision {
   updatedAt: string;
   /** When it first became agreed or rejected (for decision-time analytics). */
   settledAt?: string | null;
+  finality?: Finality;
+  condition?: string | null;
+  /** Overturned after having been agreed in this meeting. */
+  reversed?: boolean;
+  /** Earlier states, oldest first (status, wording, finality changes). */
+  history?: DecisionChange[];
+  /** Set on a decision that a later one replaced. */
+  supersededBy?: string | null;
+  confidence?: number | null;
+  trace?: Trace;
 }
 
 /** An agreed decision from an earlier meeting (for spotting contradictions). */
@@ -206,9 +268,12 @@ export interface ActionItem {
   deadline: string | null;
   dueDate: string | null;
   status: 'open' | 'done';
+  commitment?: 'firm' | 'tentative';
   evidence: number[];
   firstSeenAt: string;
   updatedAt: string;
+  confidence?: number | null;
+  trace?: Trace;
 }
 
 export interface OpenQuestion {
@@ -216,14 +281,22 @@ export interface OpenQuestion {
   question: string;
   askedBy: string | null;
   status: 'open' | 'answered';
+  answer?: string | null;
+  firstSeenAt?: string;
+  answeredAt?: string | null;
   evidence: number[];
+  confidence?: number | null;
+  trace?: Trace;
 }
 
 export interface KeyPoint {
   id: string;
   point: string;
   importance: 'high' | 'normal';
+  kind?: 'fact' | 'opinion' | 'idea';
   evidence: number[];
+  confidence?: number | null;
+  trace?: Trace;
 }
 
 export interface Assumption {
@@ -232,6 +305,22 @@ export interface Assumption {
   madeBy: string | null;
   status: 'unverified' | 'confirmed' | 'invalidated';
   evidence: number[];
+  confidence?: number | null;
+  trace?: Trace;
+}
+
+/** Someone changed their mind or corrected something they had said. */
+export interface StatementChange {
+  id: string;
+  person: string;
+  kind: 'changed_position' | 'corrected';
+  topic: string;
+  before: string;
+  after: string;
+  relatedItems: string[];
+  evidence: number[];
+  confidence?: number | null;
+  trace?: Trace;
 }
 
 export type RiskKind = 'conflict' | 'dependency' | 'deadline' | 'blocker' | 'contradiction' | 'other';
@@ -250,6 +339,8 @@ export interface Risk {
   evidence: number[];
   firstSeenAt: string;
   updatedAt: string;
+  confidence?: number | null;
+  trace?: Trace;
 }
 
 /** An open task or risk from an earlier meeting (for spotting repeated blockers and dependencies). */
@@ -280,6 +371,7 @@ export interface Copilot {
 export interface Insights {
   summary: string;
   keyPoints?: KeyPoint[];
+  statementChanges?: StatementChange[];
   assumptions?: Assumption[];
   risks?: Risk[];
   copilot?: Copilot | null;
@@ -301,6 +393,7 @@ export function emptyInsights(): Insights {
   return {
     summary: '',
     keyPoints: [],
+    statementChanges: [],
     assumptions: [],
     risks: [],
     copilot: null,

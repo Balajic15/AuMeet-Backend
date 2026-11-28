@@ -91,6 +91,7 @@ async function analyse(lines: Utterance[], prep: Prep = {}, batch = 4): Promise<
     ms.push(Date.now() - t);
     notes = normalize(notes, out, {
       validLines: new Set(seen.map((u) => u.id)),
+      lineInfo: new Map(seen.map((u) => [u.id, { at: u.at, speaker: u.speakerName }])),
       people: [...new Set(seen.map((u) => u.speakerName))].map((n) => ({ identity: `user:${n.toLowerCase()}`, name: n, userId: null })),
       analyzedThrough: end,
       now: new Date(seen.at(-1)!.at),
@@ -117,7 +118,111 @@ const PAST = [
   { ref: 'P2', statement: 'Release every two weeks', date: '2026-11-12', title: 'Billing kickoff' },
 ];
 
+const active = (n: Insights) => n.decisions.filter((d) => d.status !== 'superseded' && d.status !== 'rejected');
+
 const scenarios: Record<string, () => Promise<{ checks: Check[]; ms: number[] }>> = {
+  async 'understanding: changed positions and corrections'() {
+    const { notes, ms } = await analyse(script([
+      ['Ben', 'I think we should launch on Monday.'],
+      ['Asha', 'We have 200 users in the beta right now.'],
+      ['Asha', 'Sorry, I mean 20 users, not 200.'],
+      ['Ben', "Actually, thinking about it more, I'd rather wait until Thursday so support is ready."],
+    ]));
+    const ch = notes.statementChanges ?? [];
+    return {
+      ms,
+      checks: [
+        check('Asha corrected the user count', ch.some((c) => c.person === 'Asha' && c.kind === 'corrected' && has(c.after, '20')), ch),
+        check('Ben changed his position', ch.some((c) => c.person === 'Ben' && c.kind === 'changed_position' && has(c.after, 'thursday')), ch),
+        check('the notes use 20, not 200', !JSON.stringify(notes.keyPoints ?? []).includes('200'), notes.keyPoints),
+      ],
+    };
+  },
+
+  async 'understanding: brainstorming is not a commitment'() {
+    const { notes, ms } = await analyse(script([
+      ['Chen', 'We could do a webinar, or maybe a podcast series. Just thinking out loud.'],
+      ['Asha', 'Maybe I could look at the podcast idea at some point.'],
+      ['Ben', "I'll send the press kit to the agency by Friday."],
+      ['Chen', 'Great.'],
+    ]));
+    const press = notes.actionItems.find((a) => has(a.task, 'press'));
+    const webinar = notes.actionItems.find((a) => has(a.task, 'webinar'));
+    const podcast = notes.actionItems.find((a) => has(a.task, 'podcast'));
+    return {
+      ms,
+      checks: [
+        check('the press kit is a firm task for Ben', !!press && press.owner === 'Ben' && press.commitment === 'firm', notes.actionItems),
+        check('the webinar idea is not a task', !webinar, notes.actionItems),
+        check('the podcast is at most a tentative task', !podcast || podcast.commitment === 'tentative', podcast),
+        check('ideas are recorded as ideas', (notes.keyPoints ?? []).some((k) => k.kind === 'idea'), notes.keyPoints),
+      ],
+    };
+  },
+
+  async 'understanding: a decision becomes conditional (same record)'() {
+    const { notes, ms } = await analyse(script([
+      ['Asha', "Let's launch on Monday."],
+      ['Ben', 'Agreed, Monday it is.'],
+      ['Chen', 'Monday works for me.'],
+      ['Ben', 'Wait – legal has not signed off on the terms yet.'],
+      ['Asha', 'Okay, then we launch Monday only if legal signs off by Friday.'],
+      ['Ben', 'Fine with me.'],
+      ['Chen', 'Same.'],
+    ]));
+    const launch = active(notes).filter((d) => has(d.statement + d.topic, 'launch') || has(d.statement, 'monday'));
+    return {
+      ms,
+      checks: [
+        check('exactly one launch decision', launch.length === 1, notes.decisions),
+        check('it is conditional on legal', launch[0]?.finality === 'conditional' && has((launch[0]?.condition ?? '') + launch[0]?.statement, 'legal'), launch[0]),
+        check('it has confidence and evidence with times', (launch[0]?.confidence ?? 0) > 0 && !!launch[0]?.trace?.firstAt && (launch[0]?.evidence.length ?? 0) > 0, launch[0]),
+      ],
+    };
+  },
+
+  async 'understanding: a reversed decision is updated, not duplicated'() {
+    const { notes, ms } = await analyse(script([
+      ['Asha', "Let's use Stripe for payments."],
+      ['Ben', 'Yes, Stripe.'],
+      ['Chen', 'Agreed.'],
+      ['Ben', 'Hmm, I just checked: Stripe fees are too high for our volume. We should drop Stripe and use Adyen instead.'],
+      ['Asha', 'Okay, agreed, Adyen.'],
+      ['Chen', 'Adyen is fine.'],
+    ]));
+    const pay = active(notes).filter((d) => has(d.statement + d.topic, 'stripe') || has(d.statement + d.topic, 'adyen') || has(d.topic, 'payment'));
+    const all = notes.decisions.filter((d) => has(d.statement + d.topic, 'stripe') || has(d.statement + d.topic, 'adyen'));
+    return {
+      ms,
+      checks: [
+        check('one live payments decision, for Adyen', pay.length === 1 && pay[0]!.status === 'agreed' && has(pay[0]!.statement, 'adyen'), notes.decisions),
+        check('the change is visible (reversed, history or superseded)', all.some((d) => d.reversed || (d.history?.length ?? 0) > 0 || d.status === 'superseded'), all),
+        check('Stripe is no longer an agreed decision', !active(notes).some((d) => has(d.statement, 'stripe') && !has(d.statement, 'adyen') && d.status === 'agreed'), notes.decisions),
+      ],
+    };
+  },
+
+  async 'understanding: answered questions, facts and opinions'() {
+    const { notes, ms } = await analyse(script([
+      ['Asha', 'Who owns QA for the release? Nobody seems to know.'],
+      ['Ben', 'Good question, I am not sure either.'],
+      ['Asha', 'Churn was 4% last month.'],
+      ['Ben', 'Honestly I feel the onboarding is confusing.'],
+      ['Chen', 'About the QA question – I own it, I took it over last week.'],
+      ['Asha', 'Great, thanks Chen.'],
+    ]));
+    const q = notes.openQuestions.find((x) => has(x.question, 'qa'));
+    const kinds = (notes.keyPoints ?? []).map((k) => `${k.kind}:${k.point}`);
+    return {
+      ms,
+      checks: [
+        check('the QA question is answered with Chen', q?.status === 'answered' && has(q.answer, 'chen'), notes.openQuestions),
+        check('churn is a fact', kinds.some((k) => k.startsWith('fact:') && has(k, '4')), kinds),
+        check('the onboarding remark is an opinion', kinds.some((k) => k.startsWith('opinion:') && has(k, 'onboarding')), kinds),
+      ],
+    };
+  },
+
   async 'injection: a participant cannot dictate the notes'() {
     const { notes, ms } = await analyse(script([
       ['Asha', "Let's look at the Q3 budget."],

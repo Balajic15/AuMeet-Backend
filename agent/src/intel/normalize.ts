@@ -4,7 +4,10 @@ import type {
   Assumption,
   Copilot,
   Decision,
+  DecisionChange,
   EarlierItemRef,
+  StatementChange,
+  Trace,
   GoalProgress,
   Insights,
   KeyPoint,
@@ -35,7 +38,12 @@ export interface NormalizeContext {
   pastDecisions?: PastDecisionRef[];
   /** Open tasks / risks from earlier meetings, referenced by the model as E1, E2, … */
   earlierItems?: EarlierItemRef[];
+  /** When and by whom each transcript line was said (for item timestamps and speaker attribution). */
+  lineInfo?: Map<number, { at: number; speaker: string }>;
 }
+
+/** How many earlier states of a decision are kept. */
+const MAX_HISTORY = 12;
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -74,6 +82,16 @@ export function matchPerson(name: string | null, people: Person[]): Person | nul
 export function normalize(prev: Insights, out: ModelOutput, ctx: NormalizeContext): Insights {
   const now = ctx.now.toISOString();
   const evidence = (xs: number[]) => [...new Set(xs)].filter((n) => ctx.validLines.has(n)).sort((a, b) => a - b);
+  /** When it was said and by whom, from the evidence lines. */
+  const trace = (ev: number[]): Trace => {
+    const info = ev.map((n) => ctx.lineInfo?.get(n)).filter((x): x is { at: number; speaker: string } => !!x);
+    if (!info.length) return { firstAt: null, lastAt: null, speakers: [] };
+    const times = info.map((x) => x.at);
+    return { firstAt: new Date(Math.min(...times)).toISOString(), lastAt: new Date(Math.max(...times)).toISOString(), speakers: uniq(info.map((x) => x.speaker)) };
+  };
+  /** Model confidence 0–1 (kept from before when the model didn't say). */
+  const conf = (v: number | undefined, old: number | null | undefined): number | null =>
+    typeof v === 'number' && Number.isFinite(v) ? Math.round(Math.min(1, Math.max(0, v)) * 100) / 100 : old ?? null;
 
   // ---- topics ----
   const prevTopics = new Map(prev.topics.map((t) => [t.id, t]));
@@ -89,36 +107,77 @@ export function normalize(prev: Insights, out: ModelOutput, ctx: NormalizeContex
   topics.push(...prevTopics.values());
 
   // ---- decisions ----
+  // A decision that changes is UPDATED (with its history), never duplicated: the model keeps the id, or names the
+  // earlier one in "revises" – then the new content is folded into it.
   const prevDecisions = new Map(prev.decisions.map((d) => [d.id, d]));
   const decisionId = nextIdFactory('d', prevDecisions.keys());
-  const decisions: Decision[] = [];
+  const byId = new Map<string, Decision>();
   const past = new Map((ctx.pastDecisions ?? []).map((p) => [p.ref.toUpperCase(), p]));
+  const supersede: Array<{ old: string; by: string }> = [];
   for (const d of out.decisions) {
     const statement = clean(d.statement);
     if (!statement) continue;
-    const old = prevDecisions.get(d.id);
-    const id = old ? d.id : decisionId();
-    prevDecisions.delete(id);
-    decisions.push({
+    const revises = clean(d.revises);
+    const known = (id: string | null) => !!id && (prevDecisions.has(id) || byId.has(id));
+    let id: string;
+    if (known(d.id)) {
+      id = d.id;
+      if (revises && revises !== id && known(revises)) supersede.push({ old: revises, by: id });
+    } else if (known(revises)) {
+      id = revises!; // a duplicate of an existing decision: update that one instead
+    } else {
+      id = decisionId();
+    }
+    const old = byId.get(id) ?? prevDecisions.get(id);
+    const finality = d.finality ?? old?.finality ?? 'final';
+    const status = d.status;
+    const history: DecisionChange[] = [...(old?.history ?? [])];
+    if (old && (old.status !== status || old.statement !== statement || (old.finality ?? 'final') !== finality)) {
+      history.push({ at: old.updatedAt, status: old.status, statement: old.statement, finality: old.finality ?? 'final' });
+    }
+    const ev = evidence([...(old?.evidence ?? []), ...d.evidence]);
+    byId.set(id, {
       id,
-      topic: clean(d.topic) ?? '',
+      topic: clean(d.topic) ?? old?.topic ?? '',
       statement,
-      status: d.status,
+      status,
       options: uniq(d.options),
       proposedBy: uniq(d.proposedBy),
       supporters: uniq(d.supporters),
       objectors: uniq(d.objectors),
       // Only an unsettled decision can need confirmation.
-      confirmationNeeded: d.status === 'agreed' || d.status === 'rejected' ? null : clean(d.confirmationNeeded),
+      confirmationNeeded: status === 'agreed' || status === 'rejected' ? null : clean(d.confirmationNeeded),
       // Once spotted, a conflict stays visible (the model may stop repeating it on later runs).
       contradicts: past.get((d.contradicts ?? '').trim().toUpperCase()) ?? old?.contradicts ?? null,
-      evidence: evidence([...(old?.evidence ?? []), ...d.evidence]),
+      evidence: ev,
       firstSeenAt: old?.firstSeenAt ?? now,
       updatedAt: now,
-      settledAt: d.status === 'agreed' || d.status === 'rejected' ? old?.settledAt ?? now : null,
+      settledAt: status === 'agreed' || status === 'rejected' ? old?.settledAt ?? now : null,
+      finality,
+      condition: finality === 'conditional' ? clean(d.condition) ?? old?.condition ?? null : null,
+      reversed: !!old?.reversed || !!d.reversed || (old?.status === 'agreed' && (status === 'rejected' || (status === 'agreed' && old.statement !== statement && !!d.reversed))),
+      history: history.slice(-MAX_HISTORY),
+      supersededBy: null,
+      confidence: conf(d.confidence, old?.confidence),
+      trace: trace(ev),
+    });
+    prevDecisions.delete(id);
+  }
+  for (const d of prevDecisions.values()) byId.set(d.id, d);
+  for (const { old, by } of supersede) {
+    const d = byId.get(old);
+    if (!d || d.status === 'superseded') continue;
+    byId.set(old, {
+      ...d,
+      status: 'superseded',
+      supersededBy: by,
+      confirmationNeeded: null,
+      history: [...(d.history ?? []), { at: d.updatedAt, status: d.status, statement: d.statement, finality: d.finality ?? 'final' }].slice(-MAX_HISTORY),
+      reversed: d.reversed || d.status === 'agreed',
+      updatedAt: now,
     });
   }
-  decisions.push(...prevDecisions.values());
+  const decisions: Decision[] = [...byId.values()];
 
   // ---- action items ----
   const prevActions = new Map(prev.actionItems.map((a) => [a.id, a]));
@@ -142,10 +201,14 @@ export function normalize(prev: Insights, out: ModelOutput, ctx: NormalizeContex
       deadline: clean(a.deadline),
       dueDate: due && DATE_RE.test(due) && !Number.isNaN(Date.parse(due)) ? due : null,
       status: a.status,
+      commitment: a.commitment ?? old?.commitment ?? 'firm',
       evidence: evidence([...(old?.evidence ?? []), ...a.evidence]),
       firstSeenAt: old?.firstSeenAt ?? now,
       updatedAt: now,
-    });
+      confidence: conf(a.confidence, old?.confidence),
+      trace: trace(evidence([...(old?.evidence ?? []), ...a.evidence])),
+      ...(old && (old as { external?: unknown }).external ? { external: (old as { external?: unknown }).external } : {}),
+    } as ActionItem);
   }
   actionItems.push(...prevActions.values());
 
@@ -159,12 +222,18 @@ export function normalize(prev: Insights, out: ModelOutput, ctx: NormalizeContex
     const old = prevQs.get(q.id);
     const id = old ? q.id : qId();
     prevQs.delete(id);
+    const ev = evidence([...(old?.evidence ?? []), ...q.evidence]);
     openQuestions.push({
       id,
       question,
       askedBy: clean(q.askedBy),
       status: q.status,
-      evidence: evidence([...(old?.evidence ?? []), ...q.evidence]),
+      answer: q.status === 'answered' ? clean(q.answer) ?? old?.answer ?? null : null,
+      firstSeenAt: old?.firstSeenAt ?? now,
+      answeredAt: q.status === 'answered' ? old?.answeredAt ?? now : null,
+      evidence: ev,
+      confidence: conf(q.confidence, old?.confidence),
+      trace: trace(ev),
     });
   }
   openQuestions.push(...prevQs.values());
@@ -179,7 +248,8 @@ export function normalize(prev: Insights, out: ModelOutput, ctx: NormalizeContex
     const old = prevPoints.get(k.id);
     const id = old ? k.id : pointId();
     prevPoints.delete(id);
-    keyPoints.push({ id, point, importance: k.importance, evidence: evidence([...(old?.evidence ?? []), ...k.evidence]) });
+    const ev = evidence([...(old?.evidence ?? []), ...k.evidence]);
+    keyPoints.push({ id, point, importance: k.importance, kind: k.kind ?? old?.kind ?? 'fact', evidence: ev, confidence: conf(k.confidence, old?.confidence), trace: trace(ev) });
   }
   keyPoints.push(...prevPoints.values());
 
@@ -193,7 +263,8 @@ export function normalize(prev: Insights, out: ModelOutput, ctx: NormalizeContex
     const old = prevAssumptions.get(a.id);
     const id = old ? a.id : assumptionId();
     prevAssumptions.delete(id);
-    assumptions.push({ id, statement, madeBy: clean(a.madeBy), status: a.status, evidence: evidence([...(old?.evidence ?? []), ...a.evidence]) });
+    const ev = evidence([...(old?.evidence ?? []), ...a.evidence]);
+    assumptions.push({ id, statement, madeBy: clean(a.madeBy), status: a.status, evidence: ev, confidence: conf(a.confidence, old?.confidence), trace: trace(ev) });
   }
   assumptions.push(...prevAssumptions.values());
 
@@ -222,15 +293,45 @@ export function normalize(prev: Insights, out: ModelOutput, ctx: NormalizeContex
       evidence: evidence([...(old?.evidence ?? []), ...r.evidence]),
       firstSeenAt: old?.firstSeenAt ?? now,
       updatedAt: now,
+      confidence: conf(r.confidence, old?.confidence),
+      trace: trace(evidence([...(old?.evidence ?? []), ...r.evidence])),
     });
   }
   risks.push(...prevRisks.values());
+
+  // ---- changed positions and corrections ----
+  const prevChanges = new Map((prev.statementChanges ?? []).map((c) => [c.id, c]));
+  const changeId = nextIdFactory('c', prevChanges.keys());
+  const statementChanges: StatementChange[] = [];
+  for (const c of out.statementChanges ?? []) {
+    const person = clean(c.person);
+    const after = clean(c.after);
+    if (!person || !after) continue;
+    const old = prevChanges.get(c.id);
+    const id = old ? c.id : changeId();
+    prevChanges.delete(id);
+    const ev = evidence([...(old?.evidence ?? []), ...c.evidence]);
+    statementChanges.push({
+      id,
+      person: matchPerson(person, ctx.people)?.name ?? person,
+      kind: c.kind,
+      topic: clean(c.topic) ?? '',
+      before: clean(c.before) ?? '',
+      after,
+      relatedItems: uniq(c.relatedItems).filter((x) => knownIds.has(x)),
+      evidence: ev,
+      confidence: conf(c.confidence, old?.confidence),
+      trace: trace(ev),
+    });
+  }
+  statementChanges.push(...prevChanges.values());
 
   return {
     summary: clean(out.summary) ?? prev.summary,
     keyPoints,
     assumptions,
     risks,
+    statementChanges,
     copilot: mergeCopilot(prev.copilot ?? null, out, now),
     topics,
     decisions,
