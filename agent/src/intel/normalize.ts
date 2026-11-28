@@ -38,6 +38,8 @@ export interface NormalizeContext {
   pastDecisions?: PastDecisionRef[];
   /** Open tasks / risks from earlier meetings, referenced by the model as E1, E2, … */
   earlierItems?: EarlierItemRef[];
+  /** What the copilot may show (behaviour settings) and what people dismissed. */
+  copilot?: { enabled: boolean; minRelevance: number; maxSuggestions: number; dismissed: Set<string> };
   /** When and by whom each transcript line was said (for item timestamps and speaker attribution). */
   lineInfo?: Map<number, { at: number; speaker: string }>;
 }
@@ -332,7 +334,7 @@ export function normalize(prev: Insights, out: ModelOutput, ctx: NormalizeContex
     assumptions,
     risks,
     statementChanges,
-    copilot: mergeCopilot(prev.copilot ?? null, out, now),
+    copilot: mergeCopilot(prev.copilot ?? null, out, now, ctx.copilot),
     topics,
     decisions,
     actionItems,
@@ -346,16 +348,38 @@ export function normalize(prev: Insights, out: ModelOutput, ctx: NormalizeContex
 }
 
 /** The copilot is a live view: each run replaces it (an empty run keeps the last one). */
-function mergeCopilot(prev: Copilot | null, out: ModelOutput, now: string): Copilot | null {
+/**
+ * The copilot only shows what clears the bar: relevance at or above the host's threshold, not dismissed by anyone,
+ * strongest first, at most maxSuggestions. "Nothing to suggest" is a valid, common outcome.
+ */
+export function mergeCopilot(prev: Copilot | null, out: ModelOutput, now: string, policy?: NormalizeContext['copilot']): Copilot | null {
   const c = out.copilot;
   if (!c) return prev;
-  const list = (xs: string[]) => uniq(xs).slice(0, 5);
+  if (policy && !policy.enabled) return null;
+  const seen = new Set<string>();
+  const suggestions = (c.suggestions ?? [])
+    .map((x) => ({
+      key: (clean(x.key) ?? clean(x.text) ?? '').toLowerCase().slice(0, 80),
+      kind: x.kind,
+      text: clean(x.text) ?? '',
+      why: clean(x.why) ?? '',
+      relevance: Math.round(Math.min(1, Math.max(0, Number.isFinite(x.relevance) ? x.relevance : 0)) * 100) / 100,
+      relatedItems: uniq(x.relatedItems ?? []),
+    }))
+    .filter((x) => x.text && x.key && !seen.has(x.key) && seen.add(x.key))
+    .filter((x) => !policy || (x.relevance >= policy.minRelevance && !policy.dismissed.has(x.key)))
+    .sort((a, b) => b.relevance - a.relevance)
+    .slice(0, policy?.maxSuggestions ?? 4);
   return {
     currentFocus: clean(c.currentFocus) ?? '',
     offTopic: !!c.offTopic,
     offTopicNote: c.offTopic ? clean(c.offTopicNote) ?? '' : '',
-    missingInfo: list(c.missingInfo),
-    suggestedQuestions: list(c.suggestedQuestions).slice(0, 3),
+    repeating: !!c.repeating,
+    repetitionNote: c.repeating ? clean(c.repetitionNote) ?? '' : '',
+    suggestions,
+    // Kept for older readers of the notes.
+    missingInfo: suggestions.filter((x) => x.kind === 'missing_consideration').map((x) => x.text),
+    suggestedQuestions: suggestions.filter((x) => x.kind === 'question' || x.kind === 'from_history' || x.kind === 'unanswered').map((x) => x.text),
     discussNext: clean(c.discussNext) ?? '',
     agendaAdvice: clean(c.agendaAdvice) ?? '',
     updatedAt: now,

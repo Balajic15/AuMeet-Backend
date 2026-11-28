@@ -29,16 +29,33 @@ const STATUS_ORDER: DecisionStatus[] = ['disputed', 'proposed', 'agreed', 'rejec
         @if (cp.offTopic) {
           <p class="drift"><app-icon name="alert" [size]="14" /> Off topic{{ cp.offTopicNote ? ': ' + cp.offTopicNote : '' }}</p>
         }
-        @if (cp.currentFocus) { <p class="focus"><span class="k">Now</span> {{ cp.currentFocus }}</p> }
-        @if (cp.discussNext) { <p class="focus"><span class="k">Next</span> {{ cp.discussNext }}</p> }
-        @if (cp.agendaAdvice) { <p class="focus"><span class="k">Time</span> {{ cp.agendaAdvice }}</p> }
-        @if (cp.missingInfo.length) {
-          <p class="sub">Missing information</p>
-          <ul class="plain">@for (m of cp.missingInfo; track $index) { <li>{{ m }}</li> }</ul>
+        @if (cp.repeating) {
+          <p class="drift"><app-icon name="alert" [size]="14" /> Going in circles{{ cp.repetitionNote ? ': ' + cp.repetitionNote : '' }}</p>
         }
-        @if (cp.suggestedQuestions.length) {
-          <p class="sub">Questions to ask</p>
-          <ul class="plain qs">@for (q of cp.suggestedQuestions; track $index) { <li>“{{ q }}”</li> }</ul>
+        @if (cp.currentFocus) { <p class="focus"><span class="k">Now</span> {{ cp.currentFocus }}</p> }
+        @if (cp.suggestions; as list) {
+          @if (list.length) {
+            <ul class="sugs">
+              @for (x of list; track x.key) {
+                <li [class]="'sug k-' + x.kind">
+                  <span class="sug-kind">{{ kindLabel(x.kind) }}</span>
+                  <span class="sug-text">{{ x.kind === 'question' || x.kind === 'unanswered' || x.kind === 'from_history' ? '“' + x.text + '”' : x.text }}</span>
+                  @if (x.why) { <span class="sug-why">{{ x.why }}</span> }
+                  <span class="sug-acts">
+                    <button type="button" class="mini" title="Useful" aria-label="Useful" (click)="copilotFeedback.emit({ key: x.key, kind: x.kind, action: 'useful' }); thanked.set(x.key)">
+                      {{ thanked() === x.key ? 'Thanks' : 'Useful' }}
+                    </button>
+                    <button type="button" class="mini" title="Not now – don't suggest again" aria-label="Dismiss" (click)="copilotFeedback.emit({ key: x.key, kind: x.kind, action: 'dismiss' })">Dismiss</button>
+                  </span>
+                </li>
+              }
+            </ul>
+          } @else {
+            <p class="quiet">Nothing to add right now.</p>
+          }
+        } @else {
+          @if (cp.discussNext) { <p class="focus"><span class="k">Next</span> {{ cp.discussNext }}</p> }
+          @if (cp.agendaAdvice) { <p class="focus"><span class="k">Time</span> {{ cp.agendaAdvice }}</p> }
         }
       </section>
     }
@@ -385,6 +402,19 @@ const STATUS_ORDER: DecisionStatus[] = ['disputed', 'proposed', 'agreed', 'rejec
 
     .copilot { padding: 12px 14px; background: var(--surface-sunken); border-left: 3px solid #9db4ff; }
     .copilot h3 { color: #9db4ff; }
+    .sugs { list-style: none; margin: 10px 0 0; padding: 0; }
+    .sug { display: grid; grid-template-columns: auto 1fr; gap: 2px 8px; padding: 8px 0; border-top: 1px solid #2a2a2a; font-size: 14px; line-height: 1.45; }
+    .sug-kind { grid-row: span 3; align-self: start; padding: 1px 6px; border: 1px solid currentColor; font-size: 11px; font-weight: 600; color: #9db4ff; }
+    .k-missing_consideration .sug-kind { color: #ffcf73; }
+    .k-from_history .sug-kind { color: #c9a7ff; }
+    .k-unanswered .sug-kind { color: #ff9b9b; }
+    .k-next_topic .sug-kind, .k-agenda .sug-kind { color: var(--brand); }
+    .sug-text { color: var(--text); }
+    .sug-why { color: var(--text-muted); font-size: 12.5px; }
+    .sug-acts { display: flex; gap: 6px; margin-top: 2px; }
+    .mini { padding: 1px 8px; background: none; border: 1px solid #3a3a3a; color: var(--text-muted); font-size: 12px; cursor: pointer; }
+    .mini:hover { color: var(--text); border-color: #555; }
+    .quiet { margin: 8px 0 0; color: var(--text-placeholder); font-size: 13px; }
     .focus { display: flex; gap: 8px; margin: 6px 0 0; font-size: 14px; line-height: 1.45; }
     .focus .k { flex: none; width: 38px; color: var(--text-muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; padding-top: 2px; }
     .drift { display: flex; gap: 6px; align-items: flex-start; margin: 0 0 8px; color: #ffb020; font-size: 13.5px; app-icon { flex: none; margin-top: 2px; } }
@@ -423,6 +453,15 @@ export class InsightsView {
   readonly editDecision = output<Decision>();
   readonly editTask = output<ActionItem>();
   readonly deleteItem = output<{ kind: 'decisions' | 'tasks' | 'questions'; id: string }>();
+  /** In the meeting: a participant found a copilot suggestion useful, or dismissed it. */
+  readonly copilotFeedback = output<{ key: string; kind: string; action: 'useful' | 'dismiss' }>();
+  protected readonly thanked = signal<string | null>(null);
+
+  protected kindLabel(k: string): string {
+    return (
+      { question: 'Ask', missing_consideration: 'Consider', next_topic: 'Move on', agenda: 'Time', from_history: 'Earlier', unanswered: 'Unanswered' } as Record<string, string>
+    )[k] ?? 'Tip';
+  }
 
   protected readonly open = signal<string | null>(null);
 

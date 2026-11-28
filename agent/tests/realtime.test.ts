@@ -58,16 +58,42 @@ describe('real-time intelligence', () => {
   });
 
   it('replaces the copilot view on each run and keeps it when a run has none', () => {
+    const sug = (key: string, relevance: number, kind = 'question') => ({ key, kind: kind as 'question', text: `Ask about ${key}`, why: 'w', relevance, relatedItems: [] });
     const copilot = {
-      currentFocus: 'Holiday plans', offTopic: true, offTopicNote: 'Talking about holidays', missingInfo: ['Owner for the docs', 'Owner for the docs'],
-      suggestedQuestions: ['Who owns the docs?', 'a', 'b', 'c'], discussNext: 'Back to pricing: it is the goal', agendaAdvice: 'Park item 4',
+      currentFocus: 'Holiday plans', offTopic: true, offTopicNote: 'Talking about holidays', repeating: true, repetitionNote: 'pricing again',
+      suggestions: [sug('docs', 0.9, 'missing_consideration'), sug('docs', 0.8), sug('a', 0.7), sug('b', 0.65), sug('c', 0.4), sug('d', 0.95)],
+      discussNext: 'Back to pricing: it is the goal', agendaAdvice: 'Park item 4',
     };
-    const s = normalize(emptyInsights(), { ...base(), copilot }, ctx());
-    expect(s.copilot).toMatchObject({ offTopic: true, missingInfo: ['Owner for the docs'], agendaAdvice: 'Park item 4' });
-    expect(s.copilot!.suggestedQuestions).toHaveLength(3);
+    const policy = { enabled: true, minRelevance: 0.6, maxSuggestions: 3, dismissed: new Set(['d']) };
+    const s = normalize(emptyInsights(), { ...base(), copilot }, { ...ctx(), copilot: policy });
+    // Below the threshold (c), dismissed (d) and duplicate keys are dropped; strongest first; at most 3.
+    expect(s.copilot!.suggestions!.map((x) => x.key)).toEqual(['docs', 'a', 'b']);
+    expect(s.copilot).toMatchObject({ offTopic: true, repeating: true, repetitionNote: 'pricing again', agendaAdvice: 'Park item 4', missingInfo: ['Ask about docs'] });
     expect(normalize(s, base(), ctx()).copilot).toEqual(s.copilot);
-    const next = normalize(s, { ...base(), copilot: { ...copilot, offTopic: false, offTopicNote: 'x' } }, ctx());
-    expect(next.copilot).toMatchObject({ offTopic: false, offTopicNote: '' });
+    const next = normalize(s, { ...base(), copilot: { ...copilot, offTopic: false, offTopicNote: 'x', repeating: false } }, { ...ctx(), copilot: policy });
+    expect(next.copilot).toMatchObject({ offTopic: false, offTopicNote: '', repeating: false, repetitionNote: '' });
+    // Switched off by the host: nothing is shown.
+    expect(normalize(s, { ...base(), copilot }, { ...ctx(), copilot: { ...policy, enabled: false } }).copilot).toBeNull();
+  });
+
+  it('dismissing a suggestion hides it now and keeps it out of later runs', async () => {
+    const { MeetingAnalyzer } = await import('../src/intel/analyzer.js');
+    const { MeetingTranscript } = await import('../src/transcript.js');
+    const t = new MeetingTranscript('m', 's');
+    t.add({ speakerId: 'user:1', speakerName: 'Asha Rao', userId: '1', isAgent: false, channel: 'voice', text: 'We launch Friday.', language: '', at: Date.now() });
+    const out = { ...base(), copilot: { currentFocus: 'Launch', offTopic: false, offTopicNote: '', discussNext: '', agendaAdvice: '', suggestions: [{ key: 'rollback', kind: 'missing_consideration' as const, text: 'Is there a rollback plan?', why: 'Launch without one', relevance: 0.9, relatedItems: [] }] } };
+    const prompts: string[] = [];
+    const a = new MeetingAnalyzer({
+      title: 'x', transcript: t, people: () => [], onUpdate: () => {},
+      analyze: async (_s, prompt) => (prompts.push(prompt), out),
+      prep: () => ({ goal: '', agenda: [], copilot: { enabled: true, minRelevance: 0.5, maxSuggestions: 4 } }),
+    });
+    await a.finish();
+    expect(a.insights.copilot!.suggestions!.map((x) => x.key)).toEqual(['rollback']);
+    expect(a.dismissSuggestion('rollback')!.copilot!.suggestions).toEqual([]);
+    await (a as unknown as { analyze: (f: boolean) => Promise<void> }).analyze(true);
+    expect(a.insights.copilot!.suggestions).toEqual([]);
+    expect(prompts.at(-1)).toContain('DISMISSED COPILOT SUGGESTIONS (never suggest these again):\n- rollback: Is there a rollback plan?');
   });
 
   it('gives the model earlier open items, lessons and the time left', () => {

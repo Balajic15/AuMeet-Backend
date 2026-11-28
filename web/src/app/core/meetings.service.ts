@@ -74,6 +74,8 @@ export interface Meeting {
 export interface LobbyMeeting extends Meeting {
   hostName: string;
   isHost: boolean;
+  /** What the AI is called in this meeting (from the AI settings), e.g. "Maaya". */
+  aiName?: string;
   /** The server has recording storage configured. */
   recordingAvailable?: boolean;
   /** Number of documents prepared for the AI. */

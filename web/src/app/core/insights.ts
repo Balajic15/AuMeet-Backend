@@ -132,11 +132,25 @@ export interface Risk {
   evidence: number[];
 }
 
+export type SuggestionKind = 'question' | 'missing_consideration' | 'next_topic' | 'agenda' | 'from_history' | 'unanswered';
+
+export interface CopilotSuggestion {
+  key: string;
+  kind: SuggestionKind;
+  text: string;
+  why: string;
+  relevance: number;
+  relatedItems: string[];
+}
+
 /** Live guidance from the copilot (replaced on every analysis). */
 export interface Copilot {
   currentFocus: string;
   offTopic: boolean;
   offTopicNote: string;
+  repeating?: boolean;
+  repetitionNote?: string;
+  suggestions?: CopilotSuggestion[];
   missingInfo: string[];
   suggestedQuestions: string[];
   discussNext: string;

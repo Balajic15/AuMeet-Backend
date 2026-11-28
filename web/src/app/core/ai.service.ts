@@ -12,6 +12,8 @@ export interface Behaviour {
   watchFor: Record<WatchKey, boolean>;
   customInstructions: string;
   learnFromReactions: boolean;
+  /** The on-screen copilot in meetings. */
+  copilot: { enabled: boolean; minRelevance: number; maxSuggestions: number };
   limits: {
     minGapSeconds: number;
     maxPerTenMinutes: number;
@@ -24,8 +26,9 @@ export interface Behaviour {
 }
 export type WatchKey = 'decisions' | 'owners' | 'disputes' | 'goal' | 'time' | 'followUps' | 'contradictions' | 'risks';
 /** Any subset of the settings. */
-export type BehaviourOverride = Partial<Omit<Behaviour, 'watchFor' | 'limits' | 'engine'>> & {
+export type BehaviourOverride = Partial<Omit<Behaviour, 'watchFor' | 'limits' | 'engine' | 'copilot'>> & {
   watchFor?: Partial<Behaviour['watchFor']>;
+  copilot?: Partial<Behaviour['copilot']>;
   limits?: Partial<Behaviour['limits']>;
 };
 

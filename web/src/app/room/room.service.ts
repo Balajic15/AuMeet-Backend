@@ -15,6 +15,7 @@ import type { Insights } from '../core/insights';
 
 export const CHAT_TOPIC = 'lk.chat'; // same topic LiveKit Agents listens on, so the AI can read chat too
 export const INSIGHTS_TOPIC = 'aumeet.insights'; // live notes from the AI agent
+export const COPILOT_TOPIC = 'aumeet.copilot'; // "useful" / "dismiss" on a copilot suggestion, to the AI agent
 export const CAPTIONS_TOPIC = 'aumeet.captions'; // what people say, transcribed by the agent
 export const AGENT_SPEECH_TOPIC = 'lk.transcription'; // what the AI itself says
 export const REACTION_TOPIC = 'aumeet.reaction';
@@ -149,6 +150,19 @@ export class RoomService implements OnDestroy {
   readonly mutedByHost = signal(0);
   readonly hasAgent = computed(() => this.participants().some((p) => p.isAgent));
   /** The AI's name as it appears in the room (from its behaviour settings, e.g. "Maaya"). */
+  /** Tell the AI a copilot suggestion helped or wasn't wanted; a dismissed one disappears right away. */
+  async copilotFeedback(key: string, kind: string, action: 'useful' | 'dismiss'): Promise<void> {
+    if (action === 'dismiss') {
+      const cur = this.insights();
+      if (cur?.copilot?.suggestions) {
+        this.insights.set({ ...cur, copilot: { ...cur.copilot, suggestions: cur.copilot.suggestions.filter((x) => x.key !== key) } });
+      }
+    }
+    const agent = [...this.room.remoteParticipants.values()].find((x) => x.isAgent);
+    if (!agent) return;
+    await this.room.localParticipant.sendText(JSON.stringify({ key, kind, action }), { topic: COPILOT_TOPIC, destinationIdentities: [agent.identity] }).catch(() => {});
+  }
+
   readonly agentName = computed(() => this.participants().find((p) => p.isAgent)?.name ?? 'The AI');
   /** The host is recording this meeting (room metadata, visible to everyone). */
   readonly recording = signal(false);

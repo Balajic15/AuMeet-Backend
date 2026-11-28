@@ -137,8 +137,21 @@ export const ModelOutput = z.object({
       currentFocus: Str.describe('What the group is discussing right now, in a few words'),
       offTopic: z.boolean().describe('true when the current discussion has wandered away from the goal/agenda/purpose'),
       offTopicNote: Str.describe('If offTopic, one short sentence on what it drifted to; otherwise ""'),
-      missingInfo: z.array(Str).describe('Information the group needs but has not got yet (owner, date, numbers, criteria …)'),
-      suggestedQuestions: z.array(Str).describe('Up to 3 questions a participant could ask now to move things forward'),
+      repeating: z.boolean().describe('true when the group keeps going over the same ground without progress').optional(),
+      repetitionNote: Str.describe('If repeating, what they keep circling around, in one short sentence; otherwise ""').optional(),
+      suggestions: z
+        .array(
+          z.object({
+            key: Str.describe('Short stable key for this suggestion, e.g. "missing:rollback-plan"; reuse it on later runs'),
+            kind: z.enum(['question', 'missing_consideration', 'next_topic', 'agenda', 'from_history', 'unanswered']),
+            text: Str.describe('The suggestion as shown to participants: a question to ask, or a short recommendation'),
+            why: Str.describe('One short reason grounded in the discussion, earlier meetings or the agenda'),
+            relevance: z.number().describe('0–1: how much this would help the meeting RIGHT NOW (1 = clearly needed, below 0.5 = nice to have)'),
+            relatedItems: z.array(Str).describe('Ids of related notes items (d1, t2, q3 …) or earlier items (P1, E2)'),
+          }),
+        )
+        .describe('Zero to a few suggestions. [] when the discussion is going fine or nothing important is missing.')
+        .optional(),
       discussNext: Str.describe('What the team should discuss next and why, in one sentence, or ""'),
       agendaAdvice: Str.describe('With an agenda and time plan: a concrete adjustment for the remaining time (e.g. "Shorten item 3, park item 4"), or ""'),
     })
@@ -356,11 +369,26 @@ export interface EarlierItemRef {
   title: string;
 }
 
+export type SuggestionKind = 'question' | 'missing_consideration' | 'next_topic' | 'agenda' | 'from_history' | 'unanswered';
+
+export interface CopilotSuggestion {
+  key: string;
+  kind: SuggestionKind;
+  text: string;
+  why: string;
+  relevance: number;
+  relatedItems: string[];
+}
+
 /** Live, non-intrusive guidance for the participants (replaced on every analysis). */
 export interface Copilot {
   currentFocus: string;
   offTopic: boolean;
   offTopicNote: string;
+  repeating?: boolean;
+  repetitionNote?: string;
+  /** Shown suggestions: above the relevance threshold, not dismissed, at most maxSuggestions. */
+  suggestions?: CopilotSuggestion[];
   missingInfo: string[];
   suggestedQuestions: string[];
   discussNext: string;

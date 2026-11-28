@@ -18,6 +18,8 @@ export interface AnalyzerOptions {
     pastDecisions?: Array<{ ref: string; statement: string; date: string; title: string }>;
     earlierItems?: EarlierItemRef[];
     lessons?: string[];
+    copilot?: { enabled: boolean; minRelevance: number; maxSuggestions: number };
+    copilotFeedback?: string;
   };
   /** Run once this many new human lines have arrived. */
   batchSize?: number;
@@ -42,6 +44,8 @@ export class MeetingAnalyzer {
   private lastRunAt = 0;
   private timer: NodeJS.Timeout | null = null;
   private stopped = false;
+  /** Copilot suggestions someone dismissed (key → text), never shown again in this meeting. */
+  private readonly dismissed = new Map<string, string>();
 
   private readonly batchSize: number;
   private readonly idleMs: number;
@@ -90,6 +94,17 @@ export class MeetingAnalyzer {
           : { id: item.id, title: item.title, minutes: item.minutes, status: 'not_started' as const, note: '', startedAt: null, doneAt: null };
       }),
     };
+  }
+
+  /** Someone dismissed a copilot suggestion: hide it now and never show it again in this meeting. */
+  dismissSuggestion(key: string): Insights | null {
+    const c = this.state.copilot;
+    const hit = c?.suggestions?.find((x) => x.key === key);
+    this.dismissed.set(key, hit?.text ?? key);
+    if (!c || !hit) return null;
+    const suggestions = (c.suggestions ?? []).filter((x) => x.key !== key);
+    this.state = { ...this.state, copilot: { ...c, suggestions } };
+    return this.state;
   }
 
   /** Call after every new human utterance (voice or chat). */
@@ -166,6 +181,8 @@ export class MeetingAnalyzer {
           pastDecisions: prep?.pastDecisions,
           earlierItems: prep?.earlierItems,
           lessons: prep?.lessons,
+          dismissed: [...this.dismissed.entries()].map(([k, t]) => `${k}: ${t}`),
+          copilotFeedback: prep?.copilotFeedback,
           elapsedMinutes: Math.round((this.now() - all[0]!.at) / 60_000),
         }),
       );
@@ -179,6 +196,7 @@ export class MeetingAnalyzer {
         agendaPlan: prep?.agenda,
         pastDecisions: prep?.pastDecisions,
         earlierItems: prep?.earlierItems,
+        copilot: prep?.copilot ? { ...prep.copilot, dismissed: new Set(this.dismissed.keys()) } : undefined,
       });
       this.pending = Math.max(0, this.pending - consumed);
       this.opts.onUpdate(this.state);

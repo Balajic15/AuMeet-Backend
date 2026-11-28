@@ -74,7 +74,8 @@ export function renderNotes(i: Insights): string {
   if (c) {
     const parts: string[] = [];
     if (c.currentFocus) parts.push(`Now discussing: ${c.currentFocus}${c.offTopic ? ` (OFF TOPIC${c.offTopicNote ? `: ${c.offTopicNote}` : ''})` : ''}`);
-    if (c.missingInfo.length) parts.push(`Missing information: ${c.missingInfo.join('; ')}`);
+    if (c.repeating) parts.push(`Going in circles${c.repetitionNote ? `: ${c.repetitionNote}` : ''}`);
+    for (const x of c.suggestions ?? []) parts.push(`Suggestion (${x.kind.replace('_', ' ')}): ${x.text}`);
     if (c.discussNext) parts.push(`Suggested next: ${c.discussNext}`);
     if (c.agendaAdvice) parts.push(`Agenda advice: ${c.agendaAdvice}`);
     if (parts.length) lines.push('Copilot view:', ...parts.map((x) => `- ${x}`));

@@ -56,6 +56,8 @@ import { InsightsStore } from './intel/store.js';
 const CHAT_TOPIC = 'lk.chat';
 /** Live notes for the meeting UI's Insights panel. */
 const INSIGHTS_TOPIC = 'aumeet.insights';
+/** Copilot feedback from participants: { key, kind, action: 'dismiss' | 'useful' }. */
+const COPILOT_TOPIC = 'aumeet.copilot';
 /** Live captions of what people say (the AI's own speech goes out on lk.transcription). */
 const CAPTIONS_TOPIC = 'aumeet.captions';
 const CAPTION_THROTTLE_MS = 250;
@@ -326,6 +328,11 @@ export default defineAgent<ProcData>({
         pastDecisions: continuity.pastDecisions,
         earlierItems: continuity.earlierItems,
         lessons,
+        copilot: (behaviour as Behaviour | null)?.copilot,
+        copilotFeedback: learning
+          .filter((x) => x.intent.startsWith('copilot_'))
+          .map((x) => `- ${x.intent.slice(8).replace(/_/g, ' ')}: found useful ${x.engaged}×, dismissed ${x.rejected}×`)
+          .join('\n'),
       }),
       ...(behaviour
         ? {
@@ -504,6 +511,36 @@ export default defineAgent<ProcData>({
         logger.debug({ err }, 'routing failed');
       }
     };
+
+    // ---------- copilot feedback ----------
+    ctx.room.registerTextStreamHandler(COPILOT_TOPIC, async (reader, from) => {
+      const p = ctx.room.remoteParticipants.get(from.identity);
+      if (!p || !isHuman(p)) return;
+      let msg: { key?: unknown; kind?: unknown; action?: unknown };
+      try {
+        msg = JSON.parse(await reader.readAll());
+      } catch {
+        return;
+      }
+      const key = typeof msg.key === 'string' ? msg.key.slice(0, 80) : '';
+      const kind = typeof msg.kind === 'string' && /^[a-z_]{1,30}$/.test(msg.kind) ? msg.kind : 'suggestion';
+      if (!key || (msg.action !== 'dismiss' && msg.action !== 'useful')) return;
+      if (msg.action === 'dismiss') {
+        const updated = analyzer.dismissSuggestion(key);
+        if (updated) {
+          void sendInsights(updated);
+          store?.save(updated, [...people.values()]).catch(() => {});
+        }
+      }
+      logger.info({ key, kind, action: msg.action }, 'copilot feedback');
+      // The team's reactions shape later suggestions (same learning as spoken remarks).
+      if (mongo && hostId && behaviour?.learnFromReactions) {
+        void recordReaction(mongo.db, {
+          hostId, meetingCode: info.meetingCode, sessionId: ctx.job.id, intent: `copilot_${kind}`,
+          reaction: msg.action === 'useful' ? 'engaged' : 'rejected', message: key, at: new Date(),
+        }).catch(() => {});
+      }
+    });
 
     // ---------- chat ----------
     ctx.room.registerTextStreamHandler(CHAT_TOPIC, async (reader, from) => {

@@ -188,11 +188,14 @@ router.get('/', requireAuth, async (req, res) => {
 // Public lobby info – what the invite link page shows before joining
 router.get('/:code', optionalAuth, async (req, res) => {
   const meeting = await findByCode(req.params.code as string);
-  const host = await UserModel.findById(meeting.host).select('name');
+  const host = await UserModel.findById(meeting.host).select({ name: 1, aiBehaviour: 1 });
+  const ai = resolve(await defaultBehaviour(), (host as { aiBehaviour?: unknown } | null)?.aiBehaviour, meeting.get('aiBehaviour'));
   res.json({
     meeting: {
       ...toPublicMeeting(meeting),
       hostName: host?.name ?? 'Unknown',
+      /** What the AI is called in this meeting (settings), e.g. "Maaya". */
+      aiName: ai.name,
       isHost: meeting.host.toString() === req.auth?.sub,
       recordingAvailable: recordingConfigured(),
       documents: await MeetingDocumentModel.countDocuments({ meetingCode: meeting.code }),

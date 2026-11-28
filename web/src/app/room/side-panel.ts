@@ -47,7 +47,7 @@ export type PanelTab = 'chat' | 'people' | 'insights';
           @if (isEmpty(ins)) {
             <p class="hint">Nothing noted yet. Decisions, tasks and open questions appear here as the meeting goes.</p>
           } @else {
-            <app-insights-view [insights]="ins" [compact]="true" [live]="true" />
+            <app-insights-view [insights]="ins" [compact]="true" [live]="true" (copilotFeedback)="room.copilotFeedback($event.key, $event.kind, $event.action)" />
           }
         } @else if (room.hasAgent()) {
           <p class="hint">{{ room.agentName() }} is listening. Decisions, tasks and open questions will appear here as the conversation develops.</p>

@@ -34,6 +34,13 @@ const WatchFor = z.object({
   risks: z.boolean(),
 });
 
+const Copilot = z.object({
+  enabled: z.boolean(),
+  /** 0–1: a suggestion needs at least this relevance to be shown. */
+  minRelevance: z.number().min(0).max(1),
+  maxSuggestions: z.number().int().min(1).max(8),
+});
+
 export const Behaviour = z.object({
   name: z.string().trim().min(1).max(30),
   wakeWords: z.array(z.string().trim().min(2).max(40)).max(30),
@@ -43,6 +50,7 @@ export const Behaviour = z.object({
   watchFor: WatchFor,
   customInstructions: z.string().max(2000),
   learnFromReactions: z.boolean(),
+  copilot: Copilot,
   limits: Limits,
   engine: Engine,
 });
@@ -59,6 +67,7 @@ export const BehaviourOverride = z
     watchFor: WatchFor.partial(),
     customInstructions: Behaviour.shape.customInstructions,
     learnFromReactions: Behaviour.shape.learnFromReactions,
+    copilot: Copilot.partial(),
     limits: Limits.partial(),
   })
   .partial()

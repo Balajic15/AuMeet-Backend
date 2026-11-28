@@ -30,6 +30,14 @@ export const Behaviour = z.object({
     /** Conflicting commitments, unrealistic deadlines, dependencies, repeated blockers. */
     risks: z.boolean().optional(),
   }),
+  /** The on-screen copilot: whether it suggests, how relevant a suggestion must be, and how many at once. */
+  copilot: z
+    .object({
+      enabled: z.boolean(),
+      minRelevance: z.number().min(0).max(1),
+      maxSuggestions: z.number().int().min(1).max(8),
+    })
+    .optional(),
   /** Free text from the host, e.g. "Mostly speak Hindi", "Be very brief", "Never joke". */
   customInstructions: z.string().max(2000),
   /** Use how this team reacted to earlier remarks. */
