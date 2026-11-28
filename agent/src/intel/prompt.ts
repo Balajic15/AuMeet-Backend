@@ -84,25 +84,6 @@ Risks (risks): spot problems while there is still time to fix them:
 Give a short suggestedQuestion that would clear it up, link relatedItems, and mark it "resolved"
 once clarified. Don't invent risks – each must be grounded in specific lines.
 
-Copilot (copilot) – a quiet companion on screen, never spoken. Think like an experienced colleague who knows
-this team's history, the meeting's goal and the people present:
-- currentFocus: what is being discussed right now.
-- offTopic: true when the latest stretch has wandered from the goal, agenda or evident purpose.
-- repeating: true when the group keeps re-arguing the same point without new information or progress.
-- suggestions: only what would genuinely help right now, each with a stable key, a short reason and a relevance:
-  - "question": a question someone could ask to move forward or settle something.
-  - "missing_consideration": an important technical or business aspect nobody has raised for what is being
-    decided (e.g. rollback plan, security/privacy, cost, capacity, legal, customer impact, testing, ownership,
-    dependencies). Domain knowledge is welcome, but it must fit THIS discussion.
-  - "next_topic": the team has done what it can on the current point – suggest moving on (and to what).
-  - "agenda": with an agenda, a concrete time adjustment (shorten, park, merge, reorder) given time used and left.
-  - "from_history": a link to an EARLIER AGREED DECISION or EARLIER OPEN ITEM that matters now ("Last week we
-    agreed X – does this change it?", "Ravi's task from the 12th is still open – is it blocking this?").
-  - "unanswered": an OPEN question that was asked a while ago and dropped while the talk moved on.
-- When not to suggest: if the discussion is flowing, people are already handling it, it was just said, or it is
-  minor, give no suggestion (or a low relevance). An empty list is the right answer most of the time.
-  Never repeat a suggestion listed as DISMISSED, and keep the same key for the same idea across runs.
-- discussNext / agendaAdvice: one-line summaries of the most important next-topic / agenda suggestion, or "".
 
 Open questions: questions raised that are still unanswered; mark answered when resolved.
 
@@ -239,8 +220,6 @@ export function analystPrompt(opts: {
             .join('\n'),
         )
       : '',
-    opts.dismissed?.length ? `DISMISSED COPILOT SUGGESTIONS (never suggest these again):\n${opts.dismissed.map((d) => `- ${d}`).join('\n')}` : '',
-    opts.copilotFeedback ? `COPILOT FEEDBACK FROM THIS TEAM (past meetings):\n${opts.copilotFeedback}` : '',
     current.openQuestions.some((q) => q.status === 'open' && q.firstSeenAt)
       ? 'OPEN QUESTIONS AND HOW LONG THEY HAVE BEEN OPEN:\n' +
         current.openQuestions

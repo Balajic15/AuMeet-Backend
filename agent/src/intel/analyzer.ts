@@ -1,6 +1,7 @@
-import type { MeetingTranscript } from '../transcript.js';
+import type { MeetingTranscript, Utterance } from '../transcript.js';
 import type { AnalyzeFn } from './gemini.js';
-import { normalize, type Person } from './normalize.js';
+import { COPILOT_SYSTEM, copilotPrompt, type CopilotFn } from './copilot.js';
+import { mergeCopilot, normalize, type Person } from './normalize.js';
 import { ANALYST_SYSTEM, analystPrompt } from './prompt.js';
 import { emptyInsights, type EarlierItemRef, type Insights } from './schema.js';
 
@@ -10,6 +11,10 @@ export interface AnalyzerOptions {
   analyze: AnalyzeFn;
   people: () => Person[];
   onUpdate: (insights: Insights) => void;
+  /** The live copilot (its own model call after each notes update); off when absent. */
+  copilot?: CopilotFn;
+  /** Who is in the room now (for the copilot). */
+  present?: () => string[];
   onError?: (err: unknown) => void;
   /** Host's goal/agenda; read on every run so edits during the meeting apply. */
   prep?: () => {
@@ -94,6 +99,41 @@ export class MeetingAnalyzer {
           : { id: item.id, title: item.title, minutes: item.minutes, status: 'not_started' as const, note: '', startedAt: null, doneAt: null };
       }),
     };
+  }
+
+  /** Ranked suggestions for the screen; failures just keep the previous view. */
+  private async runCopilot(lines: readonly Utterance[], prep: ReturnType<NonNullable<AnalyzerOptions['prep']>> | undefined): Promise<void> {
+    const policy = prep?.copilot;
+    if (!this.opts.copilot || policy?.enabled === false || this.stopped) return;
+    const all = this.opts.transcript.all;
+    try {
+      const out = await this.opts.copilot(
+        COPILOT_SYSTEM,
+        copilotPrompt({
+          title: this.opts.title,
+          insights: this.state,
+          lines,
+          present: this.opts.present?.() ?? this.opts.transcript.speakers(),
+          elapsedMinutes: Math.round((this.now() - all[0]!.at) / 60_000),
+          goal: prep?.goal,
+          agenda: prep?.agenda,
+          pastDecisions: prep?.pastDecisions,
+          earlierItems: prep?.earlierItems,
+          dismissed: [...this.dismissed.entries()].map(([k, t]) => `${k}: ${t}`),
+          feedback: prep?.copilotFeedback,
+          now: this.now(),
+        }),
+      );
+      if (this.stopped) return;
+      const copilot = mergeCopilot(this.state.copilot ?? null, { copilot: out } as never, new Date(this.now()).toISOString(), {
+        ...(policy ?? { enabled: true, minRelevance: 0, maxSuggestions: 5 }),
+        dismissed: new Set(this.dismissed.keys()),
+      });
+      this.state = { ...this.state, copilot };
+      this.opts.onUpdate(this.state);
+    } catch (err) {
+      this.opts.onError?.(err);
+    }
   }
 
   /** Someone dismissed a copilot suggestion: hide it now and never show it again in this meeting. */
@@ -181,8 +221,6 @@ export class MeetingAnalyzer {
           pastDecisions: prep?.pastDecisions,
           earlierItems: prep?.earlierItems,
           lessons: prep?.lessons,
-          dismissed: [...this.dismissed.entries()].map(([k, t]) => `${k}: ${t}`),
-          copilotFeedback: prep?.copilotFeedback,
           elapsedMinutes: Math.round((this.now() - all[0]!.at) / 60_000),
         }),
       );
@@ -200,6 +238,7 @@ export class MeetingAnalyzer {
       });
       this.pending = Math.max(0, this.pending - consumed);
       this.opts.onUpdate(this.state);
+      if (!final) await this.runCopilot(lines, prep);
     } catch (err) {
       // Keep the previous notes; the next batch retries with the lines still pending.
       this.opts.onError?.(err);

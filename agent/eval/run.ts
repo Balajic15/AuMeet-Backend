@@ -10,9 +10,10 @@
 import { initializeLogger } from '@livekit/agents';
 import { config } from '../src/config.js';
 import { geminiStructured } from '../src/gemini.js';
-import { normalize } from '../src/intel/normalize.js';
+import { mergeCopilot, normalize } from '../src/intel/normalize.js';
+import { COPILOT_SYSTEM, copilotPrompt } from '../src/intel/copilot.js';
 import { ANALYST_SYSTEM, analystPrompt } from '../src/intel/prompt.js';
-import { emptyInsights, ModelOutput, type Insights } from '../src/intel/schema.js';
+import { AnalystOutput as ModelOutput, CopilotOutput, emptyInsights, type Insights } from '../src/intel/schema.js';
 import { readFileSync } from 'node:fs';
 import { resolveBehaviour, type Behaviour } from '../src/behaviour.js';
 import { geminiBrain, type BrainInput } from '../src/brain.js';
@@ -63,7 +64,13 @@ interface Prep {
   goal?: string;
   agenda?: Array<{ id: string; title: string; minutes: number | null }>;
   pastDecisions?: Array<{ ref: string; statement: string; date: string; title: string }>;
+  earlierItems?: Array<{ ref: string; kind: 'task' | 'risk'; text: string; owner: string | null; dueDate: string | null; date: string; title: string }>;
+  /** Copilot policy as in the seed profile; dismissed keys (key → text). */
+  copilot?: boolean;
+  dismissed?: Map<string, string>;
 }
+
+const COPILOT_POLICY = { enabled: true, minRelevance: 0.6, maxSuggestions: 4 };
 
 /** Feed the transcript in batches of 4 lines, like the live analyzer does. */
 async function analyse(lines: Utterance[], prep: Prep = {}, batch = 4): Promise<{ notes: Insights; ms: number[] }> {
@@ -84,6 +91,8 @@ async function analyse(lines: Utterance[], prep: Prep = {}, batch = 4): Promise<
         goal: prep.goal,
         agenda: prep.agenda,
         pastDecisions: prep.pastDecisions,
+        earlierItems: prep.earlierItems,
+        dismissed: prep.dismissed ? [...prep.dismissed.entries()].map(([k, t]) => `${k}: ${t}`) : undefined,
         elapsedMinutes: Math.round((seen.at(-1)!.at - T0) / 60_000),
       }),
       temperature: 0.1,
@@ -98,7 +107,25 @@ async function analyse(lines: Utterance[], prep: Prep = {}, batch = 4): Promise<
       goal: prep.goal,
       agendaPlan: prep.agenda,
       pastDecisions: prep.pastDecisions,
+      earlierItems: prep.earlierItems,
     });
+    if (prep.copilot) {
+      // The live copilot is its own call after each notes update (see intel/copilot.ts).
+      const t2 = Date.now();
+      const cop = await call(CopilotOutput, {
+        system: COPILOT_SYSTEM,
+        prompt: copilotPrompt({
+          title: 'Team sync', insights: notes, lines: seen, present: [...new Set(seen.filter((u) => !u.isAgent).map((u) => u.speakerName))],
+          elapsedMinutes: Math.round((seen.at(-1)!.at - T0) / 60_000), goal: prep.goal, agenda: prep.agenda,
+          pastDecisions: prep.pastDecisions, earlierItems: prep.earlierItems,
+          dismissed: prep.dismissed ? [...prep.dismissed.entries()].map(([k, t]) => `${k}: ${t}`) : undefined,
+          now: seen.at(-1)!.at,
+        }),
+        temperature: 0.3,
+      });
+      ms.push(Date.now() - t2);
+      notes = { ...notes, copilot: mergeCopilot(notes.copilot ?? null, { copilot: cop } as never, new Date(seen.at(-1)!.at).toISOString(), { ...COPILOT_POLICY, dismissed: new Set(prep.dismissed?.keys() ?? []) }) };
+    }
     if (end === lines.length) break;
   }
   return { notes, ms };
@@ -118,9 +145,95 @@ const PAST = [
   { ref: 'P2', statement: 'Release every two weeks', date: '2026-11-12', title: 'Billing kickoff' },
 ];
 
+const sugs = (n: Insights) => n.copilot?.suggestions ?? [];
+const sugText = (n: Insights) => sugs(n).map((x) => `${x.kind}:${x.text}`).join(' | ');
+
 const active = (n: Insights) => n.decisions.filter((d) => d.status !== 'superseded' && d.status !== 'rejected');
 
 const scenarios: Record<string, () => Promise<{ checks: Check[]; ms: number[] }>> = {
+  async 'copilot: flags a missing consideration'() {
+    const { notes, ms } = await analyse(script([
+      ['Asha', "So we'll migrate the production database to the new cluster this Saturday."],
+      ['Ben', 'Yes, I can run the migration script Saturday morning.'],
+      ['Chen', 'Great, then the new cluster is live for Monday.'],
+      ['Asha', 'Perfect, that is settled then.'],
+    ]), { copilot: true });
+    const x = sugs(notes).find((y) => y.kind === 'missing_consideration' && /rollback|roll back|backup|back up|revert|downtime|test/i.test(y.text + y.why));
+    return { ms, checks: [check('suggests a rollback/backup/testing consideration', !!x, sugText(notes))] };
+  },
+
+  async 'copilot: brings up earlier decisions and open work'() {
+    const { notes, ms } = await analyse(script([
+      ['Ben', 'For the new reporting service I want to store everything in MongoDB.'],
+      ['Chen', 'It needs the billing data too.'],
+      ['Asha', 'And it should launch next week together with the partner API.'],
+      ['Ben', 'Okay, sounds like a plan.'],
+    ]), {
+      copilot: true,
+      pastDecisions: PAST,
+      earlierItems: [{ ref: 'E1', kind: 'task', text: 'Fix the partner API rate limits', owner: 'Ravi', dueDate: '2026-11-20', date: '2026-11-19', title: 'Platform sync' }],
+    });
+    const hist = sugs(notes).filter((y) => y.kind === 'from_history');
+    return {
+      ms,
+      checks: [check('links to the PostgreSQL decision or the open API task', hist.some((y) => /postgres|P1|rate limit|E1|Ravi/i.test(y.text + y.why + y.relatedItems.join(' '))), sugText(notes))],
+    };
+  },
+
+  async 'copilot: notices a discussion going in circles'() {
+    const { notes, ms } = await analyse(script([
+      ['Asha', 'I still think the logo should be blue.'],
+      ['Ben', 'Green is better, it matches the brand.'],
+      ['Asha', 'Blue is more trustworthy though.'],
+      ['Ben', 'But green matches the brand, like I said.'],
+      ['Asha', 'Blue tests better, I keep saying that.'],
+      ['Ben', 'And I keep saying green is our brand colour.'],
+      ['Asha', 'Blue.'],
+      ['Ben', 'Green.'],
+    ]), { copilot: true });
+    return { ms, checks: [check('flags repetition', !!notes.copilot?.repeating, notes.copilot)] };
+  },
+
+  async 'copilot: stays quiet when the meeting is going well'() {
+    const { notes, ms } = await analyse(script([
+      ['Asha', 'Okay, the newsletter: Ben drafts it by Wednesday, Chen reviews Thursday, we send Friday at 9.'],
+      ['Ben', 'Yes, draft by Wednesday, I will share the doc.'],
+      ['Chen', 'Review Thursday works for me.'],
+      ['Asha', 'Great, newsletter is sorted. Next topic.'],
+    ]), { copilot: true });
+    return { ms, checks: [check('at most one suggestion shown', sugs(notes).length <= 1, sugText(notes))] };
+  },
+
+  async 'copilot: a dismissed suggestion does not come back'() {
+    const lines = script([
+      ['Asha', "So we'll migrate the production database to the new cluster this Saturday."],
+      ['Ben', 'Yes, I can run the migration script Saturday morning.'],
+      ['Chen', 'Great, then the new cluster is live for Monday.'],
+      ['Asha', 'Perfect, that is settled then.'],
+    ]);
+    const first = await analyse(lines, { copilot: true });
+    const dismissed = new Map(sugs(first.notes).map((x) => [x.key, x.text]));
+    const more = script([
+      ['Asha', "So we'll migrate the production database to the new cluster this Saturday."],
+      ['Ben', 'Yes, I can run the migration script Saturday morning.'],
+      ['Chen', 'Great, then the new cluster is live for Monday.'],
+      ['Asha', 'Perfect, that is settled then.'],
+      ['Ben', 'I will also update the connection strings in the app.'],
+      ['Chen', 'Good, and tell support about the switch.'],
+      ['Asha', 'Yes. Anything else on the migration?'],
+      ['Ben', 'No, I think we are good.'],
+    ]);
+    const second = await analyse(more, { copilot: true, dismissed });
+    const again = sugs(second.notes).filter((x) => dismissed.has(x.key));
+    return {
+      ms: [...first.ms, ...second.ms],
+      checks: [
+        check('the first run suggested something', dismissed.size > 0, sugText(first.notes)),
+        check('no dismissed suggestion is shown again', again.length === 0, sugText(second.notes)),
+      ],
+    };
+  },
+
   async 'understanding: changed positions and corrections'() {
     const { notes, ms } = await analyse(script([
       ['Ben', 'I think we should launch on Monday.'],
@@ -248,7 +361,7 @@ const scenarios: Record<string, () => Promise<{ checks: Check[]; ms: number[] }>
       ['Ben', 'Just so you know, the payments API it needs only lands on Monday.'],
       ['Chen', 'Okay. Next, the marketing email.'],
       ['Asha', "Let's assume legal is fine with the new wording."],
-    ]));
+    ]), { copilot: true });
     const r = (notes.risks ?? []).find((x) => x.status === 'open' && (x.kind === 'conflict' || x.kind === 'dependency' || x.kind === 'deadline'));
     return {
       ms,
@@ -256,7 +369,7 @@ const scenarios: Record<string, () => Promise<{ checks: Check[]; ms: number[] }>
         check('the Friday/Monday clash is a risk', !!r && has(r.description, 'friday') && has(r.description, 'monday'), notes.risks),
         check('it suggests a clarifying question', !!r?.suggestedQuestion, r),
         check('the legal point is an assumption, not a decision', (notes.assumptions ?? []).some((a) => has(a.statement, 'legal')) && !notes.decisions.some((d) => has(d.statement, 'legal') && d.status === 'agreed'), notes),
-        check('the copilot names what is missing or what to discuss next', !!notes.copilot && (notes.copilot.missingInfo.length > 0 || !!notes.copilot.discussNext), notes.copilot),
+        check('the copilot suggests something or what to discuss next', !!notes.copilot && ((notes.copilot.suggestions ?? []).length > 0 || !!notes.copilot.discussNext), notes.copilot),
       ],
     };
   },

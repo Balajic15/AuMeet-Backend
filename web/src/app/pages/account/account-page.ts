@@ -1,6 +1,15 @@
 import { ChangeDetectionStrategy, Component, OnInit, computed, inject, signal } from '@angular/core';
 import { FormControl, ReactiveFormsModule, Validators } from '@angular/forms';
 import { RouterLink } from '@angular/router';
+import { HttpClient } from '@angular/common/http';
+import { firstValueFrom } from 'rxjs';
+
+/** "#integrations" (back from Google) belongs to Follow-through. */
+function tabFromHash(hash: string): string {
+  const h = hash.replace(/^#/, '');
+  if (h === 'integrations') return 'follow-through';
+  return ['profile', 'ai', 'follow-through', 'security'].includes(h) ? h : 'profile';
+}
 import { AuthService, apiErrorMessage } from '../../core/auth.service';
 import { Icon } from '../../shared/icon';
 import { AiService, behaviourDiff, type Behaviour, type LearningStat } from '../../core/ai.service';
@@ -25,7 +34,16 @@ import { UserMenu } from '../../shared/user-menu';
     @if (auth.user(); as u) {
       <main class="wrap">
         <a routerLink="/" class="back"><app-icon name="arrow-left" [size]="16" /> All meetings</a>
-        <h1>Account</h1>
+        <h1>Settings</h1>
+        <nav class="tabs" role="tablist" aria-label="Settings sections">
+          @for (t of tabs(); track t.id) {
+            <a role="tab" [href]="'#' + t.id" [attr.aria-selected]="tab() === t.id" [class.active]="tab() === t.id"
+               (click)="$event.preventDefault(); go(t.id)">{{ t.label }}</a>
+          }
+        </nav>
+
+        @switch (tab()) {
+        @case ('profile') {
 
         <!-- Profile -->
         <section class="card">
@@ -51,9 +69,11 @@ import { UserMenu } from '../../shared/user-menu';
           </form>
         </section>
 
+        }
+        @case ('ai') {
         <!-- AI behaviour -->
         <section class="card">
-          <h2>AI participant</h2>
+          <h2>{{ aiName() }} (AI) in your meetings</h2>
           <p class="hint">Your default for meetings you host. You can still adjust a single meeting from its menu.</p>
           @if (aiDraft(); as d) {
             <app-behaviour-editor [value]="d" (changed)="aiDraft.set($event)" />
@@ -67,7 +87,11 @@ import { UserMenu } from '../../shared/user-menu';
             <p class="hint">Loading…</p>
           }
 
-          <h3 class="sub-h">What it learned from your meetings</h3>
+        </section>
+
+        <section class="card">
+          <h2>What it learned</h2>
+          <h3 class="sub-h first">From people's reactions</h3>
           @if (learning().length === 0) {
             <p class="hint">Nothing yet. After meetings it notices which of its remarks people took up and which they ignored.</p>
           } @else {
@@ -82,8 +106,12 @@ import { UserMenu } from '../../shared/user-menu';
         </section>
 
         <section class="card"><app-notes-learning /></section>
-        <section class="card"><app-integrations-card /></section>
+        }
+        @case ('follow-through') {
         <section class="card"><app-follow-through-settings /></section>
+        <section class="card"><app-integrations-card /></section>
+        }
+        @case ('security') {
 
         <!-- Password -->
         <section class="card">
@@ -125,6 +153,22 @@ import { UserMenu } from '../../shared/user-menu';
           </div>
         </section>
 
+        <!-- Sign-in activity -->
+        <section class="card">
+          <h2>Sign-in activity</h2>
+          @if (activity() === null) {
+            <p class="hint">Loading…</p>
+          } @else if (!activity()!.length) {
+            <p class="hint">Nothing recorded yet.</p>
+          } @else {
+            <ul class="learned">
+              @for (e of activity()!.slice(0, 15); track $index) {
+                <li><span class="intent">{{ activityLabel(e.action) }}</span><span class="stat">{{ when(e.at) }}@if (e.ip) { · {{ e.ip }} }</span></li>
+              }
+            </ul>
+          }
+        </section>
+
         <!-- Danger zone -->
         <section class="card danger">
           <h2>Delete account</h2>
@@ -136,6 +180,8 @@ import { UserMenu } from '../../shared/user-menu';
             <button class="btn btn-danger" type="button" (click)="openDelete()">Delete my account</button>
           </div>
         </section>
+        }
+        }
       </main>
 
       @if (deleting()) {
@@ -170,7 +216,12 @@ import { UserMenu } from '../../shared/user-menu';
     .wordmark { height: 46px; width: auto; display: block; margin-left: -12px; }
     .wrap { max-width: 640px; margin: 0 auto; padding: 28px 20px 80px; }
     .back { display: inline-flex; align-items: center; gap: 6px; color: var(--text-muted); font-size: 14px; }
-    h1 { margin: 20px 0 24px; font-size: 30px; font-weight: 600; }
+    h1 { margin: 20px 0 16px; font-size: 30px; font-weight: 600; }
+    .tabs { display: flex; gap: 4px; margin-bottom: 20px; border-bottom: 1px solid var(--border); overflow-x: auto; scrollbar-width: none; }
+    .tabs a { padding: 10px 12px 9px; margin-bottom: -1px; border-bottom: 2px solid transparent; color: var(--text-muted);
+      font-size: 15px; font-weight: 500; white-space: nowrap; text-decoration: none; }
+    .tabs a.active { color: var(--text); border-bottom-color: var(--brand); }
+    .sub-h.first { margin-top: 0; }
     .card { padding: 28px; margin-bottom: 16px; background: var(--surface); border: 1px solid #222; }
     .card.danger { border-color: rgba(255, 107, 107, 0.35); }
     h2 { margin: 0 0 18px; font-size: 18px; font-weight: 600; }
@@ -194,6 +245,48 @@ export class AccountPage implements OnInit {
   protected readonly auth = inject(AuthService);
   private readonly toast = inject(ToastService);
   private readonly ai = inject(AiService);
+  private readonly http = inject(HttpClient);
+
+  // ---------- tabs (kept in the URL fragment, e.g. /account#security) ----------
+  protected readonly aiName = computed(() => this.aiSaved()?.name || 'Maaya');
+  protected readonly tabs = computed(() => [
+    { id: 'profile', label: 'Profile' },
+    { id: 'ai', label: `${this.aiName()} (AI)` },
+    { id: 'follow-through', label: 'Follow-through' },
+    { id: 'security', label: 'Security' },
+  ]);
+  protected readonly tab = signal(tabFromHash(typeof location !== 'undefined' ? location.hash : ''));
+  protected readonly activity = signal<Array<{ at: string; action: string; ip: string | null }> | null>(null);
+
+  protected go(id: string): void {
+    this.tab.set(id);
+    history.replaceState(null, '', `${location.pathname}${location.search}#${id}`);
+    if (id === 'security' && this.activity() === null) void this.loadActivity();
+  }
+
+  private async loadActivity(): Promise<void> {
+    try {
+      const r = await firstValueFrom(this.http.get<{ events: Array<{ at: string; action: string; ip: string | null }> }>('/api/auth/audit'));
+      this.activity.set(r.events);
+    } catch {
+      this.activity.set([]);
+    }
+  }
+
+  protected activityLabel(a: string): string {
+    return (
+      {
+        'auth.login': 'Signed in', 'auth.oauth_login': 'Signed in with Google or GitHub', 'auth.login_failed': 'Failed sign-in attempt',
+        'auth.logout': 'Signed out', 'auth.logout_everywhere': 'Signed out everywhere', 'auth.password_changed': 'Password changed',
+        'auth.password_reset': 'Password reset', 'auth.password_reset_requested': 'Password reset requested', 'auth.email_verified': 'Email confirmed',
+        'account.registered': 'Account created', 'account.updated': 'Profile updated',
+      } as Record<string, string>
+    )[a] ?? a;
+  }
+
+  protected when(iso: string): string {
+    return new Date(iso).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
+  }
 
   protected readonly busy = signal<'name' | 'pw' | 'del' | 'ai' | null>(null);
   private readonly aiDefaults = signal<Behaviour | null>(null);
@@ -208,6 +301,7 @@ export class AccountPage implements OnInit {
   });
 
   ngOnInit(): void {
+    if (this.tab() === 'security') void this.loadActivity();
     void this.ai.account().then((r) => this.applyAi(r), () => this.toast.error('Could not load the AI settings.'));
     void this.ai.learning().then((r) => this.learning.set(r.stats), () => {});
   }

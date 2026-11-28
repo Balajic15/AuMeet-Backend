@@ -11,6 +11,32 @@ const Str = z.string();
 const Names = z.array(z.string()).describe('Participant names exactly as they appear in the transcript');
 const Evidence = z.array(z.number().int()).describe('Transcript line numbers (#n) that support this item');
 
+/** The live copilot's output (its own model call, see copilot.ts). */
+const CopilotOutputShape = z.object({
+  currentFocus: Str.describe('What the group is discussing right now, in a few words'),
+  offTopic: z.boolean().describe('true when the current discussion has wandered away from the goal/agenda/purpose'),
+  offTopicNote: Str.describe('If offTopic, one short sentence on what it drifted to; otherwise ""'),
+  repeating: z.boolean().describe('true when the group keeps going over the same ground without progress').optional(),
+  repetitionNote: Str.describe('If repeating, what they keep circling around, in one short sentence; otherwise ""').optional(),
+  suggestions: z
+    .array(
+      z.object({
+        key: Str.describe('Short stable key for this suggestion, e.g. "missing:rollback-plan"; reuse it on later runs'),
+        kind: z.enum(['question', 'missing_consideration', 'next_topic', 'agenda', 'from_history', 'unanswered']),
+        text: Str.describe('The suggestion as shown to participants: a question to ask, or a short recommendation'),
+        why: Str.describe('One short reason grounded in the discussion, earlier meetings or the agenda'),
+        relevance: z.number().describe('0–1: how much this would help the meeting RIGHT NOW (1 = clearly needed, below 0.5 = nice to have)'),
+        relatedItems: z.array(Str).describe('Ids of related notes items (d1, t2, q3 …) or earlier items (P1, E2)'),
+      }),
+    )
+    .describe('Zero to a few suggestions. [] when the discussion is going fine or nothing important is missing.')
+    .optional(),
+  discussNext: Str.describe('What the team should discuss next and why, in one sentence, or ""'),
+  agendaAdvice: Str.describe('With an agenda and time plan: a concrete adjustment for the remaining time (e.g. "Shorten item 3, park item 4"), or ""'),
+});
+export const CopilotOutput = CopilotOutputShape;
+export type CopilotOutput = z.infer<typeof CopilotOutput>;
+
 export const ModelOutput = z.object({
   summary: Str.describe('2-4 sentence running summary of the meeting so far'),
   topics: z.array(
@@ -132,30 +158,7 @@ export const ModelOutput = z.object({
       }),
     )
     .optional(),
-  copilot: z
-    .object({
-      currentFocus: Str.describe('What the group is discussing right now, in a few words'),
-      offTopic: z.boolean().describe('true when the current discussion has wandered away from the goal/agenda/purpose'),
-      offTopicNote: Str.describe('If offTopic, one short sentence on what it drifted to; otherwise ""'),
-      repeating: z.boolean().describe('true when the group keeps going over the same ground without progress').optional(),
-      repetitionNote: Str.describe('If repeating, what they keep circling around, in one short sentence; otherwise ""').optional(),
-      suggestions: z
-        .array(
-          z.object({
-            key: Str.describe('Short stable key for this suggestion, e.g. "missing:rollback-plan"; reuse it on later runs'),
-            kind: z.enum(['question', 'missing_consideration', 'next_topic', 'agenda', 'from_history', 'unanswered']),
-            text: Str.describe('The suggestion as shown to participants: a question to ask, or a short recommendation'),
-            why: Str.describe('One short reason grounded in the discussion, earlier meetings or the agenda'),
-            relevance: z.number().describe('0–1: how much this would help the meeting RIGHT NOW (1 = clearly needed, below 0.5 = nice to have)'),
-            relatedItems: z.array(Str).describe('Ids of related notes items (d1, t2, q3 …) or earlier items (P1, E2)'),
-          }),
-        )
-        .describe('Zero to a few suggestions. [] when the discussion is going fine or nothing important is missing.')
-        .optional(),
-      discussNext: Str.describe('What the team should discuss next and why, in one sentence, or ""'),
-      agendaAdvice: Str.describe('With an agenda and time plan: a concrete adjustment for the remaining time (e.g. "Shorten item 3, park item 4"), or ""'),
-    })
-    .optional(),
+  copilot: CopilotOutputShape.optional(),
   progress: z
     .object({
       goalStatus: z
@@ -173,6 +176,9 @@ export const ModelOutput = z.object({
     .optional(),
 });
 export type ModelOutput = z.infer<typeof ModelOutput>;
+
+/** What the note-taker model returns (the copilot has its own call). */
+export const AnalystOutput = ModelOutput.omit({ copilot: true });
 
 export type AgendaStatus = 'not_started' | 'in_progress' | 'done' | 'skipped';
 export type GoalStatus = 'no_goal' | 'on_track' | 'drifting' | 'off_track' | 'achieved';
@@ -437,9 +443,9 @@ export function emptyInsights(): Insights {
   };
 }
 
-/** JSON Schema handed to Gemini's structured output. */
+/** JSON Schema handed to Gemini's structured output (the note-taker's). */
 export function modelOutputJsonSchema(): Record<string, unknown> {
-  const schema = z.toJSONSchema(ModelOutput, { target: 'draft-7' }) as Record<string, unknown>;
+  const schema = z.toJSONSchema(AnalystOutput, { target: 'draft-7' }) as Record<string, unknown>;
   delete schema['$schema'];
   return schema;
 }

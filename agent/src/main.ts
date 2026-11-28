@@ -48,6 +48,7 @@ import { loadLessons } from './lessons.js';
 import { z } from 'zod';
 import { MeetingAnalyzer } from './intel/analyzer.js';
 import { geminiAnalyzer } from './intel/gemini.js';
+import { geminiCopilot } from './intel/copilot.js';
 import type { Person } from './intel/normalize.js';
 import { renderNotes } from './intel/render.js';
 import type { Insights } from './intel/schema.js';
@@ -321,6 +322,8 @@ export default defineAgent<ProcData>({
       title: info.title,
       transcript,
       analyze: geminiAnalyzer(structured),
+      copilot: geminiCopilot(structured),
+      present: () => presentNames(),
       people: () => [...people.values()],
       prep: () => ({
         goal: prep.goal,

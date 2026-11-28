@@ -81,19 +81,20 @@ describe('real-time intelligence', () => {
     const { MeetingTranscript } = await import('../src/transcript.js');
     const t = new MeetingTranscript('m', 's');
     t.add({ speakerId: 'user:1', speakerName: 'Asha Rao', userId: '1', isAgent: false, channel: 'voice', text: 'We launch Friday.', language: '', at: Date.now() });
-    const out = { ...base(), copilot: { currentFocus: 'Launch', offTopic: false, offTopicNote: '', discussNext: '', agendaAdvice: '', suggestions: [{ key: 'rollback', kind: 'missing_consideration' as const, text: 'Is there a rollback plan?', why: 'Launch without one', relevance: 0.9, relatedItems: [] }] } };
+    const cop = { currentFocus: 'Launch', offTopic: false, offTopicNote: '', discussNext: '', agendaAdvice: '', suggestions: [{ key: 'rollback', kind: 'missing_consideration' as const, text: 'Is there a rollback plan?', why: 'Launch without one', relevance: 0.9, relatedItems: [] }] };
     const prompts: string[] = [];
     const a = new MeetingAnalyzer({
       title: 'x', transcript: t, people: () => [], onUpdate: () => {},
-      analyze: async (_s, prompt) => (prompts.push(prompt), out),
+      analyze: async () => base(),
+      copilot: async (_s, prompt) => (prompts.push(prompt), cop),
       prep: () => ({ goal: '', agenda: [], copilot: { enabled: true, minRelevance: 0.5, maxSuggestions: 4 } }),
     });
-    await a.finish();
+    await (a as unknown as { analyze: (f: boolean) => Promise<void> }).analyze(false);
     expect(a.insights.copilot!.suggestions!.map((x) => x.key)).toEqual(['rollback']);
     expect(a.dismissSuggestion('rollback')!.copilot!.suggestions).toEqual([]);
-    await (a as unknown as { analyze: (f: boolean) => Promise<void> }).analyze(true);
+    await (a as unknown as { analyze: (f: boolean) => Promise<void> }).analyze(false);
     expect(a.insights.copilot!.suggestions).toEqual([]);
-    expect(prompts.at(-1)).toContain('DISMISSED COPILOT SUGGESTIONS (never suggest these again):\n- rollback: Is there a rollback plan?');
+    expect(prompts.at(-1)).toContain('DISMISSED (never suggest again):\n- rollback: Is there a rollback plan?');
   });
 
   it('gives the model earlier open items, lessons and the time left', () => {
