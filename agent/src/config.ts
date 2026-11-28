@@ -48,3 +48,6 @@ export function config(): Config {
  * profile's name is used (stored data, editable). Deployment setting AGENT_DISPLAY_NAME.
  */
 export const AGENT_DISPLAY_NAME = process.env['AGENT_DISPLAY_NAME']?.trim() || 'Maaya';
+
+/** How the AI appears in the room: its name marked as AI, e.g. "Maaya (AI)" (the platform itself is AuMeet). */
+export const tileName = (name: string) => (/\(AI\)\s*$/i.test(name.trim()) ? name.trim() : `${name.trim()} (AI)`);

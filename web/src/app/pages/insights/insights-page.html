@@ -99,7 +99,7 @@
                 @if (editable() && !l.isAgent) {
                   <button type="button" class="t-who who-btn" title="Correct the speaker" (click)="openFix(l)">{{ l.speakerName }}@if (l.channel === 'chat') { <em> (chat)</em> }</button>
                 } @else {
-                  <span class="t-who">{{ l.speakerName }}@if (l.channel === 'chat') { <em> (chat)</em> }</span>
+                  <span class="t-who">{{ l.speakerName }}@if (l.isAgent) { (AI) }@if (l.channel === 'chat') { <em> (chat)</em> }</span>
                 }
                 <span class="t-text">{{ l.text }}</span>
               </li>

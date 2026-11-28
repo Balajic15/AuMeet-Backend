@@ -32,7 +32,7 @@ import { geminiBrain } from './brain.js';
 import { geminiRouter } from './router.js';
 import { loadBehaviour, wakeMatcher, type Behaviour } from './behaviour.js';
 import { loadLearning, recordReaction, type IntentStats } from './learning.js';
-import { AGENT_DISPLAY_NAME, config } from './config.js';
+import { AGENT_DISPLAY_NAME, config, tileName } from './config.js';
 import { verifyParticipant } from './identity.js';
 import { fence } from './untrusted.js';
 import { languageName, voiceLanguage } from './language.js';
@@ -171,7 +171,7 @@ export default defineAgent<ProcData>({
         setAssistantName(b.name);
         // The tile shows the configured name (e.g. "Maaya"), not a hard-coded one.
         const me = ctx.room.localParticipant;
-        if (me && me.name !== b.name) void me.updateName(b.name).catch(() => {});
+        if (me && me.name !== tileName(b.name)) void me.updateName(tileName(b.name)).catch(() => {});
       }
       isWake = b ? wakeMatcher(b) : () => false;
       const terms = b ? [b.name, ...b.wakeWords.filter((w) => /^[\p{Script=Latin}\s'-]+$/u.test(w))].slice(0, 20) : [];
@@ -747,8 +747,8 @@ export default defineAgent<ProcData>({
     });
 
     applyRoomSettings(ctx.room.metadata);
-    if (behaviour && ctx.room.localParticipant?.name !== (behaviour as Behaviour).name) {
-      await ctx.room.localParticipant?.updateName((behaviour as Behaviour).name).catch((err: unknown) => logger.debug({ err }, 'could not set the AI name'));
+    if (behaviour && ctx.room.localParticipant?.name !== tileName((behaviour as Behaviour).name)) {
+      await ctx.room.localParticipant?.updateName(tileName((behaviour as Behaviour).name)).catch((err: unknown) => logger.debug({ err }, 'could not set the AI name'));
     }
 
     // Pick up anyone whose tracks were subscribed during connect (and count everyone present as attending).
@@ -765,7 +765,7 @@ export default defineAgent<ProcData>({
 
 // Accept every dispatch with a friendly display name for the tile in the meeting UI.
 const requestFunc = async (req: JobRequest) => {
-  await req.accept(AGENT_DISPLAY_NAME);
+  await req.accept(tileName(AGENT_DISPLAY_NAME));
 };
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
